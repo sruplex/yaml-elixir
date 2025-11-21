@@ -7,11 +7,15 @@ defmodule YAML do
   Decodes a YAML string and returns Elixir data structures.
 
   ## Options
-    * `return: :first_document` — returns only the first document.
-    * `return: :all_documents` — returns all documents wrapped in a list.
-    * Default — returns:
-        - Single document → raw decoded value (map or list)
-        - Multi-document → list of all decoded documents
+    * `:return` - selects which decoded YAML documents are returned. It may be
+      one of `:first_document` or `:all_documents`. It also accepts the default
+      behaviour when no option is given. When the default behaviour is used,
+      single-document input returns the decoded value directly (map or list),
+      while multi-document input returns a list with all decoded documents.
+
+        * `:first_document` - returns only the first decoded YAML document.
+        * `:all_documents` - returns all decoded YAML documents as a list.
+
 
   ## Examples
 
