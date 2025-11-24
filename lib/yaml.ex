@@ -29,8 +29,8 @@ defmodule YAML do
       {:ok, [%{"a" => 1}, %{"b" => 2}]}
   """
 
-  def decode(binary) do
-    {:ok, YAML.Parser.parse!(binary)}
+  def decode(binary, opts) do
+    {:ok, binary |> YAML.Parser.parse!() |> apply_options(opts)}
   catch
     {:yamerl_exception, error} -> YAML.ParsingError.build_tuple(error)
   end
@@ -42,4 +42,20 @@ defmodule YAML do
       error = YAML.ParsingError.build_error(error)
       reraise(error, __STACKTRACE__)
   end
+
+  defp apply_options(docs, opts) do
+    case Keyword.get(opts, :return) do
+      :first_document ->
+        List.first(docs)
+
+      :all_documents ->
+        docs
+
+      _ ->
+        default_return(docs)
+    end
+  end
+
+  defp default_return([single]), do: single
+  defp default_return(many) when is_list(many), do: many
 end
