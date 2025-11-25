@@ -36,7 +36,6 @@ defmodule YAMLTest do
     age: 24
   """
 
-  @tag group: :single
   describe "decode/2 Single-Document -- input: list[]" do
     setup do
       %{yaml: @yaml_list}
@@ -62,14 +61,13 @@ defmodule YAMLTest do
       assert {:ok,
               [
                 [
-                  %{"name" => "Ali", age: 25},
-                  %{"name" => "Sara", age: 22}
+                  %{"name" => "Ali", "age" => 25},
+                  %{"name" => "Sara", "age" => 22}
                 ]
               ]} = YAML.decode(yaml, return: :all_documents)
     end
   end
 
-  @tag group: :single
   describe "decode/2 Single-Document -- input: map %{}" do
     setup do
       %{yaml: @yaml_map}
@@ -105,7 +103,6 @@ defmodule YAMLTest do
     end
   end
 
-  @tag group: :multi
   describe "decode/2 Multi-Document -- input: list + list" do
     setup do
       %{yaml: @yaml_multi_list}
@@ -146,7 +143,6 @@ defmodule YAMLTest do
     end
   end
 
-  @tag group: :multi
   describe "decode/2 Multi-Document -- input: map + list" do
     setup do
       %{yaml: @yaml_multi_map}

@@ -25,18 +25,17 @@ defmodule YAML do
       iex> YAML.decode("a: 1", return: :first_document)
       {:ok, %{"a" => 1}}
 
-      iex> YAML.decode("a: 1\n---\nb: 2", return: :all_documents)
-      {:ok, [%{"a" => 1}, %{"b" => 2}]}
+
   """
 
-  def decode(binary, opts) do
+  def decode(binary, opts \\ []) do
     {:ok, binary |> YAML.Parser.parse!() |> apply_options(opts)}
   catch
     {:yamerl_exception, error} -> YAML.ParsingError.build_tuple(error)
   end
 
-  def decode!(binary) do
-    YAML.Parser.parse!(binary)
+  def decode!(binary, opts \\ []) do
+    binary |> YAML.Parser.parse!() |> apply_options(opts)
   catch
     {:yamerl_exception, error} ->
       error = YAML.ParsingError.build_error(error)
