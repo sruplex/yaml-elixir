@@ -2,175 +2,104 @@ defmodule YAMLTest do
   use ExUnit.Case
   doctest YAML
 
-  @yaml_list """
-  - name: Ali
-    age: 25
-  - name: Sara
-    age: 22
-  """
+  alias YAML.Support.Fixtures
 
-  @yaml_map """
-  name: Ali
-  age: 25
-  hobbies:
-    - Reading
-    - Hiking
-    - Photography
-  """
+  describe "decode/2" do
+    test "no options" do
+      yaml = Fixtures.read!(:simple_map)
+      assert {:ok, result} = YAML.decode(yaml)
 
-  @yaml_multi_list """
-  - name: Ali
-    age: 25
-  - name: Sara
-    age: 22
-  ---
-  - name: Rizwan
-    age: 24
-  """
+      assert result == %{
+               "name" => "Ali",
+               "age" => 25,
+               "hobbies" => ["Reading", "Hiking", "Photography"]
+             }
 
-  @yaml_multi_map """
-  name: Ali
-  age: 25
-  ---
-  - name: Rizwan
-    age: 24
-  """
+      yaml = Fixtures.read!(:simple_list)
+      assert {:ok, result} = YAML.decode(yaml)
+      assert result == [%{"name" => "Ali", "age" => 25}, %{"name" => "Sara", "age" => 22}]
 
-  describe "decode/2 Single-Document -- input: list[]" do
-    setup do
-      %{yaml: @yaml_list}
+      yaml = Fixtures.read!(:multi_document_two_lists)
+      assert {:ok, result} = YAML.decode(yaml)
+
+      assert result == [
+               [
+                 %{"name" => "Ali", "age" => 25},
+                 %{"name" => "Sara", "age" => 22}
+               ],
+               [
+                 %{"name" => "Rizwan", "age" => 24}
+               ]
+             ]
+
+      yaml = Fixtures.read!(:multi_document_mixed_types)
+      assert {:ok, result} = YAML.decode(yaml)
+
+      assert result == [
+               %{"name" => "Ali", "age" => 25},
+               [
+                 %{"name" => "Rizwan", "age" => 24}
+               ]
+             ]
     end
 
-    test "Without option returns list of map (Default)", %{yaml: yaml} do
-      assert {:ok,
-              [
-                %{"name" => "Ali", "age" => 25},
-                %{"name" => "Sara", "age" => 22}
-              ]} = YAML.decode(yaml)
+    test "return: :first_document always returns the first document" do
+      yaml = Fixtures.read!(:simple_map)
+      assert {:ok, result} = YAML.decode(yaml, return: :first_document)
+
+      assert result == %{
+               "name" => "Ali",
+               "age" => 25,
+               "hobbies" => ["Reading", "Hiking", "Photography"]
+             }
+
+      yaml = Fixtures.read!(:simple_list)
+      assert {:ok, result} = YAML.decode(yaml, return: :first_document)
+      assert result == [%{"name" => "Ali", "age" => 25}, %{"name" => "Sara", "age" => 22}]
+
+      yaml = Fixtures.read!(:multi_document_two_lists)
+      assert {:ok, result} = YAML.decode(yaml, return: :first_document)
+      assert result == [%{"age" => 25, "name" => "Ali"}, %{"age" => 22, "name" => "Sara"}]
+
+      yaml = Fixtures.read!(:multi_document_mixed_types)
+      assert {:ok, result} = YAML.decode(yaml, return: :first_document)
+      assert result == %{"age" => 25, "name" => "Ali"}
     end
 
-    test "return: :first_document", %{yaml: yaml} do
-      assert {:ok,
-              [
-                %{"name" => "Ali", "age" => 25},
-                %{"name" => "Sara", "age" => 22}
-              ]} = YAML.decode(yaml, return: :first_document)
-    end
+    test "return: :all_documents always returns the list of all documents" do
+      yaml = Fixtures.read!(:simple_map)
+      assert {:ok, result} = YAML.decode(yaml, return: :all_documents)
 
-    test "return: :all_documents", %{yaml: yaml} do
-      assert {:ok,
-              [
-                [
-                  %{"name" => "Ali", "age" => 25},
-                  %{"name" => "Sara", "age" => 22}
-                ]
-              ]} = YAML.decode(yaml, return: :all_documents)
-    end
-  end
+      assert result == [
+               %{"age" => 25, "hobbies" => ["Reading", "Hiking", "Photography"], "name" => "Ali"}
+             ]
 
-  describe "decode/2 Single-Document -- input: map %{}" do
-    setup do
-      %{yaml: @yaml_map}
-    end
+      yaml = Fixtures.read!(:simple_list)
+      assert {:ok, result} = YAML.decode(yaml, return: :all_documents)
+      assert result == [[%{"age" => 25, "name" => "Ali"}, %{"age" => 22, "name" => "Sara"}]]
 
-    test "Without option returns map (Default)", %{yaml: yaml} do
-      assert {:ok,
-              %{
-                "name" => "Ali",
-                "age" => 25,
-                "hobbies" => ["Reading", "Hiking", "Photography"]
-              }} = YAML.decode(yaml)
-    end
+      yaml = Fixtures.read!(:multi_document_two_lists)
+      assert {:ok, result} = YAML.decode(yaml, return: :all_documents)
 
-    test "return: :first_document", %{yaml: yaml} do
-      assert {:ok,
-              %{
-                "name" => "Ali",
-                "age" => 25,
-                "hobbies" => ["Reading", "Hiking", "Photography"]
-              }} = YAML.decode(yaml, return: :first_document)
-    end
+      assert result == [
+               [
+                 %{"name" => "Ali", "age" => 25},
+                 %{"name" => "Sara", "age" => 22}
+               ],
+               [
+                 %{"name" => "Rizwan", "age" => 24}
+               ]
+             ]
 
-    test "return: :all_documents wraps map in list", %{yaml: yaml} do
-      assert {:ok,
-              [
-                %{
-                  "name" => "Ali",
-                  "age" => 25,
-                  "hobbies" => ["Reading", "Hiking", "Photography"]
-                }
-              ]} = YAML.decode(yaml, return: :all_documents)
-    end
-  end
+      yaml = Fixtures.read!(:multi_document_mixed_types)
+      assert {:ok, result} = YAML.decode(yaml, return: :all_documents)
 
-  describe "decode/2 Multi-Document -- input: list + list" do
-    setup do
-      %{yaml: @yaml_multi_list}
-    end
-
-    test "Without option returns both documents (Default)", %{yaml: yaml} do
-      assert {:ok,
-              [
-                [
-                  %{"name" => "Ali", "age" => 25},
-                  %{"name" => "Sara", "age" => 22}
-                ],
-                [
-                  %{"name" => "Rizwan", "age" => 24}
-                ]
-              ]} = YAML.decode(yaml)
-    end
-
-    test "return: :first_document returns only first document", %{yaml: yaml} do
-      assert {:ok,
-              [
-                %{"name" => "Ali", "age" => 25},
-                %{"name" => "Sara", "age" => 22}
-              ]} = YAML.decode(yaml, return: :first_document)
-    end
-
-    test "return: :all_documents same as default", %{yaml: yaml} do
-      assert {:ok,
-              [
-                [
-                  %{"name" => "Ali", "age" => 25},
-                  %{"name" => "Sara", "age" => 22}
-                ],
-                [
-                  %{"name" => "Rizwan", "age" => 24}
-                ]
-              ]} = YAML.decode(yaml, return: :all_documents)
-    end
-  end
-
-  describe "decode/2 Multi-Document -- input: map + list" do
-    setup do
-      %{yaml: @yaml_multi_map}
-    end
-
-    test "Without option returns both documents (Default)", %{yaml: yaml} do
-      assert {:ok,
-              [
-                %{"name" => "Ali", "age" => 25},
-                [
-                  %{"name" => "Rizwan", "age" => 24}
-                ]
-              ]} = YAML.decode(yaml)
-    end
-
-    test "return: :first_document returns only first map document", %{yaml: yaml} do
-      assert {:ok, %{"name" => "Ali", "age" => 25}} =
-               YAML.decode(yaml, return: :first_document)
-    end
-
-    test "return: :all_documents (same as default)", %{yaml: yaml} do
-      assert {:ok,
-              [
-                %{"name" => "Ali", "age" => 25},
-                [
-                  %{"name" => "Rizwan", "age" => 24}
-                ]
-              ]} = YAML.decode(yaml, return: :all_documents)
+      assert result == [
+               %{"name" => "Ali", "age" => 25},
+               [
+                 %{"name" => "Rizwan", "age" => 24}
+               ]
+             ]
     end
   end
 end

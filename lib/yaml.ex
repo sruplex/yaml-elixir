@@ -8,11 +8,12 @@ defmodule YAML do
 
   ## Options
     * `:return` - selects which decoded YAML documents are returned. It may be
-      one of `:first_document` or `:all_documents`. It also accepts the default
-      behaviour when no option is given. When the default behaviour is used,
-      single-document input returns the decoded value directly (map or list),
-      while multi-document input returns a list with all decoded documents.
+      one of `:auto`, `:first_document` or `:all_documents`.
 
+        * `:auto` (default) - automatically determines the return format based on
+          the input. Single-document input returns the decoded value directly
+          single document (map or list), while multi-document input returns a
+          list with all decoded documents.
         * `:first_document` - returns only the first decoded YAML document.
         * `:all_documents` - returns all decoded YAML documents as a list.
 
@@ -43,14 +44,14 @@ defmodule YAML do
   end
 
   defp apply_options(docs, opts) do
-    case Keyword.get(opts, :return) do
+    case Keyword.get(opts, :return, :auto) do
       :first_document ->
         List.first(docs)
 
       :all_documents ->
         docs
 
-      _ ->
+      :auto ->
         default_return(docs)
     end
   end
