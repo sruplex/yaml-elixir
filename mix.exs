@@ -55,7 +55,7 @@ defmodule YAML.MixProject do
 
   # Compilation Paths
   defp elixirc_paths(:test),
-    do: ["lib", "test/support", "test/factories", "test/stubs"]
+    do: ["lib", "test/support"]
 
   defp elixirc_paths(_env), do: ["lib"]
 
