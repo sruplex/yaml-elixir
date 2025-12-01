@@ -4,12 +4,8 @@ defmodule YAML.Parser do
   def parse!(string) when is_binary(string) do
     string
     |> :yamerl_constr.string(@yamerl_opts)
-    |> isolate()
-    |> normalize()
+    |> Enum.map(&normalize/1)
   end
-
-  defp isolate([term]), do: isolate(term)
-  defp isolate(term), do: term
 
   defp normalize({:yamerl_seq, _, _, _, list, _count}) do
     Enum.map(list, &normalize/1)
