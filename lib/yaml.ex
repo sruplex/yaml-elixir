@@ -2,11 +2,17 @@ defmodule YAML do
   @moduledoc """
   Documentation for YAML.
   """
+  alias YAML.Parser
 
   @doc """
-  Decodes a YAML string and returns Elixir data structures.
-
+   Decodes YAML strings into Elixir data structures or AST.
   ## Options
+    * `:detailed` - controls whether to return AST with metadata or simplified data
+    (default: `false`)
+
+      * `false` (default) - returns plain Elixir maps, lists, and primitives
+      * `true` - returns full AST with metadata (line numbers, column numbers, tags)
+
     * `:return` - selects which decoded YAML documents are returned. It may be
       one of `:auto`, `:first_document` or `:all_documents`.
 
@@ -30,13 +36,26 @@ defmodule YAML do
   """
 
   def decode(binary, opts \\ []) do
-    {:ok, binary |> YAML.Parser.parse!() |> apply_options(opts)}
+    detailed = Keyword.get(opts, :detailed, false)
+
+    result =
+      binary
+      |> Parser.parse!()
+      |> maybe_simplify(detailed)
+      |> apply_options(opts)
+
+    {:ok, result}
   catch
     {:yamerl_exception, error} -> YAML.ParsingError.build_tuple(error)
   end
 
   def decode!(binary, opts \\ []) do
-    binary |> YAML.Parser.parse!() |> apply_options(opts)
+    detailed = Keyword.get(opts, :detailed, false)
+
+    binary
+    |> YAML.Parser.parse!()
+    |> maybe_simplify(detailed)
+    |> apply_options(opts)
   catch
     {:yamerl_exception, error} ->
       error = YAML.ParsingError.build_error(error)
@@ -58,4 +77,7 @@ defmodule YAML do
 
   defp default_return([single]), do: single
   defp default_return(many) when is_list(many), do: many
+
+  defp maybe_simplify(ast_documents, true), do: ast_documents
+  defp maybe_simplify(ast_documents, false), do: Parser.simplify_ast(ast_documents)
 end
