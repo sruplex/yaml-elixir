@@ -1,5 +1,92 @@
-name: Ali
-age: 25
+# -------- Document 1 ----------
 ---
-- name: Rizwan
-  age: 24
+# simple values
+name: "Rizu"                # string
+age: 25                     # integer
+price: 99.99                # float
+
+active: true                # boolean
+disabled: false             # boolean
+
+middle_name: null           # null
+empty_field: ~              # also null
+
+# timestamp / datetime
+created_date: 2025-01-01          # date
+created_at: 2025-01-01T12:30:45Z  # datetime (ISO 8601)
+
+# IP addresses
+ipv4: 192.168.1.10          # IPv4
+ipv6: "2001:0db8:85a3:0000:0000:8a2e:0370:7334"         # IPv6
+
+# binary (base64)
+binary_data: !!binary |
+  SGVsbG8gV09STEQ=
+
+# list (array)
+skills:
+  - Elixir
+  - JavaScript
+  - Docker
+
+# map (object)
+address:
+  city: Lahore
+  zip: 54000
+
+# -------- Document 2 ----------
+---
+# list of maps
+users:
+  - id: 1
+    name: Ali
+    active: true
+    last_login: 2025-01-05T08:00:00Z
+    ip: 10.0.0.5
+  - id: 2
+    name: Sara
+    active: false
+    email: null
+    last_login: ~
+    ip: 10.0.0.8
+
+# nested structures
+project:
+  name: YAML Demo
+  tags:
+    - config
+    - example
+  meta:
+    version: 1.0
+    published: false
+    build_time: 2025-01-10T14:22:00Z
+
+# -------- Document 3 ----------
+---
+# multi-line string
+description: |
+  This is line one
+  This is line two
+
+# anchors and aliases
+defaults: &defaults
+  retries: 3
+  timeout: 30
+  created_at: 2025-01-01T00:00:00Z
+
+service_a:
+  <<: *defaults
+  url: "https://api.service-a.com"
+  ip: 172.16.0.1
+
+service_b:
+  <<: *defaults
+  url: "https://api.service-b.com"
+  ip: 172.16.0.2
+
+# other types
+misc:
+  yes_value: yes          # YAML 1.1 bool-like
+  no_value: no            # YAML 1.1 bool-like
+  infinity: .inf          # infinity
+  not_a_number: .nan      # NaN

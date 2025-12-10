@@ -81,7 +81,7 @@ defmodule YAML.Parser do
     }
   end
 
-  defp convert_node({:yamerl_null, _, tag, meta, _}) do
+  defp convert_node({:yamerl_null, _, tag, meta}) do
     %Scalar{
       value: nil,
       meta: build_meta(tag, meta)
@@ -89,7 +89,14 @@ defmodule YAML.Parser do
   end
 
   defp convert_node({node_type, _, tag, meta, value})
-       when node_type in [:yamerl_str, :yamerl_int, :yamerl_bool, :yamerl_float, :yamerl_binary] do
+       when node_type in [
+              :yamerl_str,
+              :yamerl_int,
+              :yamerl_bool,
+              :yamerl_float,
+              :yamerl_binary,
+              :yamerl_ip_addr
+            ] do
     %Scalar{
       value: value,
       meta: build_meta(tag, meta)
