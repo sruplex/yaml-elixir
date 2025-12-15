@@ -30,7 +30,60 @@ defmodule YAML.Parser do
   def parse!(string) when is_binary(string) do
     string
     |> :yamerl_constr.string(@yamerl_opts)
-    |> build_ast()
+    |> do_parse()
+  end
+
+  defp do_parse({:yamerl_doc, root}) do
+    %Document{root: do_parse(root)}
+  end
+
+  defp do_parse({:yamerl_map, _, tag, meta, pairs}) do
+    %Mapping{
+      pairs: Enum.map(pairs, fn {k, v} -> {do_parse(k), do_parse(v)} end),
+      meta: build_meta(tag, meta)
+    }
+  end
+
+  defp do_parse({:yamerl_seq, _, tag, meta, items, doc_count}) do
+    %List{items: Enum.map(items, &do_parse/1), meta: build_meta(tag, meta), length: doc_count}
+  end
+
+  defp do_parse({:yamerl_null, _, tag, meta}) do
+    %Scalar{value: nil, meta: build_meta(tag, meta)}
+  end
+
+  defp do_parse({node_type, _, tag, meta, value})
+       when node_type in [
+              :yamerl_str,
+              :yamerl_int,
+              :yamerl_bool,
+              :yamerl_float,
+              :yamerl_binary,
+              :yamerl_ip_addr
+            ] do
+    %Scalar{value: value, meta: build_meta(tag, meta)}
+  end
+
+  defp do_parse(
+         {:yamerl_timestamp, _data, tag, meta, year, month, day, hour, minute, second, _fraction,
+          _tz}
+       )
+       when is_integer(year) and is_integer(month) and is_integer(day) do
+    meta = build_meta(tag, meta)
+    hour = normalize_integer(hour)
+    minute = normalize_integer(minute)
+    second = normalize_integer(second)
+    datetime = NaiveDateTime.new!(year, month, day, hour, minute, second)
+
+    %Scalar{value: datetime, meta: meta}
+  end
+
+  defp do_parse(yamerl_result) when is_list(yamerl_result) do
+    Enum.map(yamerl_result, &do_parse/1)
+  end
+
+  defp do_parse({_type, _data, _tag, _meta, value}) do
+    %Scalar{value: value, meta: nil}
   end
 
   @doc """
@@ -48,110 +101,39 @@ defmodule YAML.Parser do
            }
          }
        ]
-    iex>YAML.Parser.simplify_ast(ast)
+    iex>YAML.Parser.simplify(ast)
     [%{"key" => "value"}]
 
   """
 
-  def simplify_ast(ast_documents) when is_list(ast_documents) do
-    Enum.map(ast_documents, &simplify/1)
-  end
-
-  defp build_ast(yamerl_result) do
-    Enum.map(yamerl_result, &build_document/1)
-  end
-
-  defp build_document({:yamerl_doc, root}) do
-    %Document{root: convert_node(root)}
-  end
-
-  defp convert_node({:yamerl_seq, _, tag, meta, items, _doc_count}) do
-    %List{
-      items: Enum.map(items, &convert_node/1),
-      meta: build_meta(tag, meta)
-    }
-  end
-
-  defp convert_node({:yamerl_map, _, tag, meta, pairs}) do
-    pairs = Enum.map(pairs, fn {k, v} -> {convert_node(k), convert_node(v)} end)
-
-    %Mapping{
-      pairs: pairs,
-      meta: build_meta(tag, meta)
-    }
-  end
-
-  defp convert_node({:yamerl_null, _, tag, meta}) do
-    %Scalar{
-      value: nil,
-      meta: build_meta(tag, meta)
-    }
-  end
-
-  defp convert_node({node_type, _, tag, meta, value})
-       when node_type in [
-              :yamerl_str,
-              :yamerl_int,
-              :yamerl_bool,
-              :yamerl_float,
-              :yamerl_binary,
-              :yamerl_ip_addr
-            ] do
-    %Scalar{
-      value: value,
-      meta: build_meta(tag, meta)
-    }
-  end
-
-  defp convert_node(
-         {:yamerl_timestamp, _data, tag, meta, year, month, day, hour, minute, second, _fraction,
-          _tz}
-       )
-       when is_integer(year) and is_integer(month) and is_integer(day) do
-    meta = build_meta(tag, meta)
-    hour = normalize_integer(hour)
-    minute = normalize_integer(minute)
-    second = normalize_integer(second)
-    datetime = NaiveDateTime.new!(year, month, day, hour, minute, second)
-
-    %Scalar{
-      value: datetime,
-      meta: meta
-    }
-  end
-
-  defp convert_node({_type, _data, _tag, _meta, value}) do
-    %Scalar{value: value, meta: nil}
-  end
-
-  defp build_meta(tag, meta) do
-    %Meta{
-      tag: to_string(tag),
-      line: meta[:line],
-      column: meta[:column]
-    }
-  end
-
-  defp normalize_integer(v) when is_integer(v), do: v
-  defp normalize_integer(_), do: 0
-
-  defp simplify(%Document{root: root}) do
+  def simplify(%Document{root: root}) do
     simplify(root)
   end
 
-  defp simplify(%Mapping{pairs: pairs}) do
+  def simplify(%Mapping{pairs: pairs}) do
     Map.new(pairs, fn {key, value} ->
       {simplify(key), simplify(value)}
     end)
   end
 
-  defp simplify(%List{items: items}) do
+  def simplify(%List{items: items}) do
     Enum.map(items, &simplify/1)
   end
 
-  defp simplify(%Scalar{value: value}) do
+  def simplify(%Scalar{value: value}) do
     value
   end
 
-  defp simplify(value), do: value
+  def simplify(ast_documents) when is_list(ast_documents) do
+    Enum.map(ast_documents, &simplify/1)
+  end
+
+  def simplify(value), do: value
+
+  defp build_meta(tag, meta) do
+    %Meta{tag: to_string(tag), line: meta[:line], column: meta[:column]}
+  end
+
+  defp normalize_integer(v) when is_integer(v), do: v
+  defp normalize_integer(_), do: 0
 end

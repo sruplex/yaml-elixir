@@ -79,5 +79,5 @@ defmodule YAML do
   defp default_return(many) when is_list(many), do: many
 
   defp maybe_simplify(ast_documents, true), do: ast_documents
-  defp maybe_simplify(ast_documents, false), do: Parser.simplify_ast(ast_documents)
+  defp maybe_simplify(ast_documents, false), do: Parser.simplify(ast_documents)
 end
