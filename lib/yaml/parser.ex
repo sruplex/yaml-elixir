@@ -27,10 +27,21 @@ defmodule YAML.Parser do
     ]
   """
 
+  def parse(string) when is_binary(string) do
+    {:ok,
+     string
+     |> :yamerl_constr.string(@yamerl_opts)
+     |> do_parse()}
+  catch
+    {:yamerl_exception, error} ->
+      {:error, YAML.ParsingError.build_error(error)}
+  end
+
   def parse!(string) when is_binary(string) do
-    string
-    |> :yamerl_constr.string(@yamerl_opts)
-    |> do_parse()
+    case parse(string) do
+      {:ok, yaml} -> yaml
+      {:error, error} -> raise error
+    end
   end
 
   defp do_parse({:yamerl_doc, root}) do
