@@ -2,11 +2,17 @@ defmodule YAML do
   @moduledoc """
   Documentation for YAML.
   """
+  alias YAML.Parser
 
   @doc """
-  Decodes a YAML string and returns Elixir data structures.
-
+   Decodes YAML strings into Elixir data structures or AST.
   ## Options
+    * `:detailed` - controls whether to return AST with metadata or simplified data
+    (default: `false`)
+
+      * `false` (default) - returns plain Elixir maps, lists, and primitives
+      * `true` - returns full AST with metadata (line numbers, column numbers, tags)
+
     * `:return` - selects which decoded YAML documents are returned. It may be
       one of `:auto`, `:first_document` or `:all_documents`.
 
@@ -21,7 +27,7 @@ defmodule YAML do
   ## Examples
 
       iex> YAML.decode("- a: 1")
-      {:ok, [%{"a" => 1}]}
+      {:ok, [[%{"a" => 1}]]}
 
       iex> YAML.decode("a: 1", return: :first_document)
       {:ok, %{"a" => 1}}
@@ -29,33 +35,49 @@ defmodule YAML do
 
   """
 
-  def decode(binary, opts \\ []) do
-    {:ok, binary |> YAML.Parser.parse!() |> apply_options(opts)}
-  catch
-    {:yamerl_exception, error} -> YAML.ParsingError.build_tuple(error)
-  end
-
-  def decode!(binary, opts \\ []) do
-    binary |> YAML.Parser.parse!() |> apply_options(opts)
-  catch
-    {:yamerl_exception, error} ->
-      error = YAML.ParsingError.build_error(error)
-      reraise(error, __STACKTRACE__)
-  end
-
-  defp apply_options(docs, opts) do
-    case Keyword.get(opts, :return, :auto) do
-      :first_document ->
-        List.first(docs)
-
-      :all_documents ->
-        docs
-
-      :auto ->
-        default_return(docs)
+  def decode(binary, opts \\ []) when is_binary(binary) do
+    with {:ok, opts} <- validate_opts(opts),
+         {:ok, yaml} <- Parser.parse(binary) do
+      {:ok, apply_options(yaml, opts)}
     end
   end
 
-  defp default_return([single]), do: single
-  defp default_return(many) when is_list(many), do: many
+  def decode!(binary, opts \\ []) when is_binary(binary) do
+    case decode(binary, opts) do
+      {:ok, yaml} -> yaml
+      {:error, error} -> raise error
+    end
+  end
+
+  @default_opts [return: :auto, detailed: false]
+  defp validate_opts(opts) do
+    @default_opts
+    |> Keyword.merge(opts)
+    |> Enum.reduce_while({:ok, []}, fn
+      {:return, v} = opt, {:ok, acc} when v in [:auto, :all_documents, :first_document] ->
+        {:cont, {:ok, [opt | acc]}}
+
+      {:return, v}, {:ok, _acc} ->
+        {:halt, {:error, "invalid :return option #{inspect(v)} passed"}}
+
+      {:detailed, v} = opt, {:ok, acc} when v in [true, false] ->
+        {:cont, {:ok, [opt | acc]}}
+
+      {:detailed, v}, {:ok, _acc} ->
+        {:halt, {:error, "invalid :detailed option #{inspect(v)} passed"}}
+
+      unknown, {:ok, _acc} ->
+        {:halt, {:error, "unknown #{inspect(unknown)} option passed"}}
+    end)
+  end
+
+  defp apply_options(yaml, opts) do
+    Enum.reduce(opts, yaml, fn
+      {:return, :auto}, yaml -> yaml
+      {:return, :all_documents}, yaml -> yaml
+      {:return, :first_document}, [first | _] -> first
+      {:detailed, true}, yaml -> yaml
+      {:detailed, false}, yaml -> Parser.simplify(yaml)
+    end)
+  end
 end
