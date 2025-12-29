@@ -946,5 +946,32 @@ defmodule YAMLTest do
                }
              }
     end
+
+    test "returns error for invalid :return option", %{yaml: yaml} do
+      assert {:error, %YAML.ArgumentError{option: :return, value: :invalid}} =
+               YAML.decode(yaml, return: :invalid)
+
+      assert_raise YAML.ArgumentError, fn ->
+        YAML.decode!(yaml, return: :invalid)
+      end
+    end
+
+    test "returns error for invalid :detailed option", %{yaml: yaml} do
+      assert {:error, %YAML.ArgumentError{option: :detailed, value: "true"}} =
+               YAML.decode(yaml, detailed: "true")
+
+      assert_raise YAML.ArgumentError, fn ->
+        YAML.decode!(yaml, detailed: "true")
+      end
+    end
+
+    test "returns error for unknown option", %{yaml: yaml} do
+      assert {:error, %YAML.ArgumentError{option: :unknown_option, value: nil}} =
+               YAML.decode(yaml, unknown_option: :value)
+
+      assert_raise YAML.ArgumentError, fn ->
+        YAML.decode!(yaml, unknown_option: :value)
+      end
+    end
   end
 end

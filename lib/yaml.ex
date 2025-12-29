@@ -3,6 +3,7 @@ defmodule YAML do
   Documentation for YAML.
   """
   alias YAML.Parser
+  alias YAML.ArgumentError
 
   @doc """
    Decodes YAML strings into Elixir data structures or AST.
@@ -58,16 +59,25 @@ defmodule YAML do
         {:cont, {:ok, [opt | acc]}}
 
       {:return, v}, {:ok, _acc} ->
-        {:halt, {:error, "invalid :return option #{inspect(v)} passed"}}
+        error =
+          ArgumentError.invalid_option(
+            :return,
+            v,
+            "must be one of [:auto, :all_documents, :first_document]"
+          )
 
-      {:detailed, v} = opt, {:ok, acc} when v in [true, false] ->
+        {:halt, {:error, error}}
+
+      {:detailed, v} = opt, {:ok, acc} when is_boolean(v) ->
         {:cont, {:ok, [opt | acc]}}
 
       {:detailed, v}, {:ok, _acc} ->
-        {:halt, {:error, "invalid :detailed option #{inspect(v)} passed"}}
+        error = ArgumentError.invalid_option(:detailed, v, "must be a boolean")
+        {:halt, {:error, error}}
 
-      unknown, {:ok, _acc} ->
-        {:halt, {:error, "unknown #{inspect(unknown)} option passed"}}
+      {key, _val}, {:ok, _acc} ->
+        error = ArgumentError.invalid_option(key, nil, "unknown option")
+        {:halt, {:error, error}}
     end)
   end
 
