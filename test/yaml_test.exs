@@ -38,7 +38,7 @@ defmodule YAMLTest do
 
     test "return: :all_documents always returns the list of all documents", %{yaml: yaml} do
       assert {:ok, result} = YAML.decode(yaml, return: :all_documents)
-      assert [doc1, doc2, doc3] = result
+      assert [doc1, doc2, doc3, doc4] = result
 
       assert doc1 == %{
                "active" => true,
@@ -116,13 +116,23 @@ defmodule YAMLTest do
                  },
                  "ip" => "172.16.0.2",
                  "url" => "https://api.service-b.com"
-               }
+               },
+               "Mark McGwire" => %{"avg" => 0.278, "hr" => 65},
+               "Sammy Sosa" => %{"avg" => 0.288, "hr" => 63},
+               "control" => "\b1998\t1999\t2000\n",
+               "hex esc" => "\r\n is \r\n",
+               "quoted" => " # Not a 'comment'.",
+               "single" => "\"Howdy!\" he cried.",
+               "tie-fighter" => "|\\-*-/|",
+               "unicode" => "Sosa did fine.☺"
              }
+
+      assert doc4 == "Mark McGwire's year was crippled by a knee injury.\n"
     end
 
     test "detailed: true -- returns AST", %{yaml: yaml} do
       assert {:ok, result} = YAML.decode(yaml, detailed: true)
-      assert [doc1, doc2, doc3] = result
+      assert [doc1, doc2, doc3, doc4] = result
 
       assert doc1 == %YAML.AST.Document{
                root: %YAML.AST.Mapping{
@@ -855,9 +865,134 @@ defmodule YAMLTest do
                          }}
                       ],
                       meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:map", line: 89, column: 3}
+                    }},
+                   {%YAML.AST.Scalar{
+                      value: "Mark McGwire",
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 94, column: 1}
+                    },
+                    %YAML.AST.Mapping{
+                      pairs: [
+                        {%YAML.AST.Scalar{
+                           value: "hr",
+                           meta: %YAML.AST.Meta{
+                             tag: "tag:yaml.org,2002:str",
+                             line: 94,
+                             column: 16
+                           }
+                         },
+                         %YAML.AST.Scalar{
+                           value: 65,
+                           meta: %YAML.AST.Meta{
+                             tag: "tag:yaml.org,2002:int",
+                             line: 94,
+                             column: 20
+                           }
+                         }},
+                        {%YAML.AST.Scalar{
+                           value: "avg",
+                           meta: %YAML.AST.Meta{
+                             tag: "tag:yaml.org,2002:str",
+                             line: 94,
+                             column: 24
+                           }
+                         },
+                         %YAML.AST.Scalar{
+                           value: 0.278,
+                           meta: %YAML.AST.Meta{
+                             tag: "tag:yaml.org,2002:float",
+                             line: 94,
+                             column: 29
+                           }
+                         }}
+                      ],
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:map", line: 94, column: 15}
+                    }},
+                   {%YAML.AST.Scalar{
+                      value: "Sammy Sosa",
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 95, column: 1}
+                    },
+                    %YAML.AST.Mapping{
+                      pairs: [
+                        {%YAML.AST.Scalar{
+                           value: "hr",
+                           meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 96, column: 5}
+                         },
+                         %YAML.AST.Scalar{
+                           value: 63,
+                           meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:int", line: 96, column: 9}
+                         }},
+                        {%YAML.AST.Scalar{
+                           value: "avg",
+                           meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 97, column: 5}
+                         },
+                         %YAML.AST.Scalar{
+                           value: 0.288,
+                           meta: %YAML.AST.Meta{
+                             tag: "tag:yaml.org,2002:float",
+                             line: 97,
+                             column: 10
+                           }
+                         }}
+                      ],
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:map", line: 95, column: 13}
+                    }},
+                   {%YAML.AST.Scalar{
+                      value: "unicode",
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 101, column: 1}
+                    },
+                    %YAML.AST.Scalar{
+                      value: "Sosa did fine.☺",
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 101, column: 10}
+                    }},
+                   {%YAML.AST.Scalar{
+                      value: "control",
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 102, column: 1}
+                    },
+                    %YAML.AST.Scalar{
+                      value: "\b1998\t1999\t2000\n",
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 102, column: 10}
+                    }},
+                   {%YAML.AST.Scalar{
+                      value: "hex esc",
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 103, column: 1}
+                    },
+                    %YAML.AST.Scalar{
+                      value: "\r\n is \r\n",
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 103, column: 10}
+                    }},
+                   {%YAML.AST.Scalar{
+                      value: "single",
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 105, column: 1}
+                    },
+                    %YAML.AST.Scalar{
+                      value: "\"Howdy!\" he cried.",
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 105, column: 9}
+                    }},
+                   {%YAML.AST.Scalar{
+                      value: "quoted",
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 106, column: 1}
+                    },
+                    %YAML.AST.Scalar{
+                      value: " # Not a 'comment'.",
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 106, column: 9}
+                    }},
+                   {%YAML.AST.Scalar{
+                      value: "tie-fighter",
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 107, column: 1}
+                    },
+                    %YAML.AST.Scalar{
+                      value: "|\\-*-/|",
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 107, column: 14}
                     }}
                  ],
                  meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:map", line: 67, column: 1}
+               }
+             }
+
+      assert doc4 == %YAML.AST.Document{
+               root: %YAML.AST.Scalar{
+                 meta: %YAML.AST.Meta{column: 5, line: 109, tag: "tag:yaml.org,2002:str"},
+                 value: "Mark McGwire's year was crippled by a knee injury.\n"
                }
              }
     end
@@ -865,7 +1000,7 @@ defmodule YAMLTest do
     test "detailed: false -- returns simple response", %{yaml: yaml} do
       assert {:ok, result} = YAML.decode(yaml)
       assert {:ok, ^result} = YAML.decode(yaml, detailed: false)
-      assert [doc1, doc2, doc3] = result
+      assert [doc1, doc2, doc3, doc4] = result
 
       assert doc1 == %{
                "active" => true,
@@ -943,8 +1078,18 @@ defmodule YAMLTest do
                  },
                  "ip" => "172.16.0.2",
                  "url" => "https://api.service-b.com"
-               }
+               },
+               "Mark McGwire" => %{"avg" => 0.278, "hr" => 65},
+               "Sammy Sosa" => %{"avg" => 0.288, "hr" => 63},
+               "control" => "\b1998\t1999\t2000\n",
+               "hex esc" => "\r\n is \r\n",
+               "quoted" => " # Not a 'comment'.",
+               "single" => "\"Howdy!\" he cried.",
+               "tie-fighter" => "|\\-*-/|",
+               "unicode" => "Sosa did fine.☺"
              }
+
+      assert doc4 == "Mark McGwire's year was crippled by a knee injury.\n"
     end
 
     test "returns error for invalid :return option", %{yaml: yaml} do

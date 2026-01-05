@@ -1,4 +1,4 @@
-# -------- Document 1 ----------
+
 ---
 # simple values
 name: "Rizu"                # string
@@ -90,3 +90,24 @@ misc:
   no_value: no            # YAML 1.1 bool-like
   infinity: .inf          # infinity
   not_a_number: .nan      # NaN
+
+Mark McGwire: {hr: 65, avg: 0.278}
+Sammy Sosa: {
+    hr: 63,
+    avg: 0.288
+  }
+
+# ASCII Art
+unicode: "Sosa did fine.\u263A"
+control: "\b1998\t1999\t2000\n"
+hex esc: "\x0d\x0a is \r\n"
+
+single: '"Howdy!" he cried.'
+quoted: ' # Not a ''comment''.'
+tie-fighter: '|\-*-/|'
+
+--- >
+  Mark McGwire's
+  year was crippled
+  by a knee injury.
+
