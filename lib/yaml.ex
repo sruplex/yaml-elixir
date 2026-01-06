@@ -24,6 +24,11 @@ defmodule YAML do
         * `:first_document` - returns only the first decoded YAML document.
         * `:all_documents` - returns all decoded YAML documents as a list.
 
+    * `:enable_merge` - controls YAML merge key behavior (default: `true`)
+
+        * `true` (default) - processes `<<` as merge keys (YAML 1.1 behavior)
+        * `false` - treats `<<` as regular keys (YAML 1.2+ behavior)
+
 
   ## Examples
 
@@ -38,7 +43,7 @@ defmodule YAML do
 
   def decode(binary, opts \\ []) when is_binary(binary) do
     with {:ok, opts} <- validate_opts(opts),
-         {:ok, yaml} <- Parser.parse(binary) do
+         {:ok, yaml} <- Parser.parse(binary, extract_parser_opts(opts)) do
       {:ok, apply_options(yaml, opts)}
     end
   end
@@ -50,7 +55,7 @@ defmodule YAML do
     end
   end
 
-  @default_opts [return: :auto, detailed: false]
+  @default_opts [return: :auto, detailed: false, enable_merge: true]
   defp validate_opts(opts) do
     @default_opts
     |> Keyword.merge(opts)
@@ -75,6 +80,13 @@ defmodule YAML do
         error = ArgumentError.invalid_option(:detailed, v, "must be a boolean")
         {:halt, {:error, error}}
 
+      {:enable_merge, v} = opt, {:ok, acc} when v in [true, false] ->
+        {:cont, {:ok, [opt | acc]}}
+
+      {:enable_merge, v}, {:ok, _acc} ->
+        error = ArgumentError.invalid_option(:enable_merge, v, "must be a boolean")
+        {:halt, {:error, error}}
+
       {key, _val}, {:ok, _acc} ->
         error = ArgumentError.invalid_option(key, nil, "unknown option")
         {:halt, {:error, error}}
@@ -88,6 +100,12 @@ defmodule YAML do
       {:return, :first_document}, [first | _] -> first
       {:detailed, true}, yaml -> yaml
       {:detailed, false}, yaml -> Parser.simplify(yaml)
+      {:enable_merge, true}, yaml -> yaml
+      {:enable_merge, false}, yaml -> yaml
     end)
+  end
+
+  defp extract_parser_opts(opts) do
+    Keyword.take(opts, [:enable_merge])
   end
 end

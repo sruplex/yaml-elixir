@@ -27,43 +27,57 @@ defmodule YAML.Parser do
     ]
   """
 
-  def parse(string) when is_binary(string) do
+  def parse(string, opts \\ []) when is_binary(string) do
+    merge? = Keyword.get(opts, :enable_merge, true)
+
     {:ok,
      string
      |> :yamerl_constr.string(@yamerl_opts)
-     |> do_parse()}
+     |> do_parse(merge?)}
   catch
     {:yamerl_exception, error} ->
       {:error, YAML.ParsingError.build_error(error)}
   end
 
-  def parse!(string) when is_binary(string) do
-    case parse(string) do
+  def parse!(string, opts \\ []) when is_binary(string) do
+    case parse(string, opts) do
       {:ok, yaml} -> yaml
       {:error, error} -> raise error
     end
   end
 
-  defp do_parse({:yamerl_doc, root}) do
-    %Document{root: do_parse(root)}
+  defp do_parse({:yamerl_doc, root}, merge?) do
+    %Document{root: do_parse(root, merge?)}
   end
 
-  defp do_parse({:yamerl_map, _, tag, meta, pairs}) do
+  defp do_parse({:yamerl_map, _, tag, meta, pairs}, merge?) do
+    parsed_pairs =
+      Enum.map(pairs, fn {k, v} ->
+        {do_parse(k, merge?), do_parse(v, merge?)}
+      end)
+
+    final_pairs =
+      if merge?, do: apply_merge(parsed_pairs), else: parsed_pairs
+
     %Mapping{
-      pairs: Enum.map(pairs, fn {k, v} -> {do_parse(k), do_parse(v)} end),
+      pairs: final_pairs,
       meta: build_meta(tag, meta)
     }
   end
 
-  defp do_parse({:yamerl_seq, _, tag, meta, items, doc_count}) do
-    %List{items: Enum.map(items, &do_parse/1), meta: build_meta(tag, meta), length: doc_count}
+  defp do_parse({:yamerl_seq, _, tag, meta, items, doc_count}, merge?) do
+    %List{
+      items: Enum.map(items, &do_parse(&1, merge?)),
+      meta: build_meta(tag, meta),
+      length: doc_count
+    }
   end
 
-  defp do_parse({:yamerl_null, _, tag, meta}) do
+  defp do_parse({:yamerl_null, _, tag, meta}, _merge?) do
     %Scalar{value: nil, meta: build_meta(tag, meta)}
   end
 
-  defp do_parse({node_type, _, tag, meta, value})
+  defp do_parse({node_type, _, tag, meta, value}, _merge?)
        when node_type in [
               :yamerl_str,
               :yamerl_int,
@@ -77,24 +91,55 @@ defmodule YAML.Parser do
 
   defp do_parse(
          {:yamerl_timestamp, _data, tag, meta, year, month, day, hour, minute, second, _fraction,
-          _tz}
+          _tz},
+         _merge?
        )
        when is_integer(year) and is_integer(month) and is_integer(day) do
     meta = build_meta(tag, meta)
     hour = normalize_integer(hour)
     minute = normalize_integer(minute)
     second = normalize_integer(second)
-    datetime = NaiveDateTime.new!(year, month, day, hour, minute, second)
 
-    %Scalar{value: datetime, meta: meta}
+    %Scalar{
+      value: NaiveDateTime.new!(year, month, day, hour, minute, second),
+      meta: meta
+    }
   end
 
-  defp do_parse(yamerl_result) when is_list(yamerl_result) do
-    Enum.map(yamerl_result, &do_parse/1)
+  defp do_parse(yamerl_result, merge?) when is_list(yamerl_result) do
+    Enum.map(yamerl_result, &do_parse(&1, merge?))
   end
 
-  defp do_parse({_type, _data, _tag, _meta, value}) do
+  defp do_parse({_type, _data, _tag, _meta, value}, _merge?) do
     %Scalar{value: value, meta: nil}
+  end
+
+  defp apply_merge(pairs) do
+    {merge_pairs, normal_pairs} =
+      Enum.split_with(pairs, fn
+        {%Scalar{value: "<<"}, _} -> true
+        _ -> false
+      end)
+
+    merged_pairs =
+      Enum.flat_map(merge_pairs, fn {_k, v} ->
+        case v do
+          %Mapping{pairs: p} ->
+            p
+
+          %List{items: items} ->
+            Enum.flat_map(items, fn
+              %Mapping{pairs: p} -> p
+              _ -> []
+            end)
+
+          _ ->
+            []
+        end
+      end)
+
+    # YAML rule: local keys override merged ones
+    merged_pairs ++ normal_pairs
   end
 
   @doc """
