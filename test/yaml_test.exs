@@ -100,20 +100,16 @@ defmodule YAMLTest do
                  "yes_value" => "yes"
                },
                "service_a" => %{
-                 "<<" => %{
-                   "created_at" => "2025-01-01T00:00:00Z",
-                   "retries" => 3,
-                   "timeout" => 30
-                 },
+                 "created_at" => "2025-01-01T00:00:00Z",
+                 "retries" => 3,
+                 "timeout" => 30,
                  "ip" => "172.16.0.1",
                  "url" => "https://api.service-a.com"
                },
                "service_b" => %{
-                 "<<" => %{
-                   "created_at" => "2025-01-01T00:00:00Z",
-                   "retries" => 3,
-                   "timeout" => 30
-                 },
+                 "created_at" => "2025-01-01T00:00:00Z",
+                 "retries" => 3,
+                 "timeout" => 30,
                  "ip" => "172.16.0.2",
                  "url" => "https://api.service-b.com"
                },
@@ -652,61 +648,40 @@ defmodule YAMLTest do
                     %YAML.AST.Mapping{
                       pairs: [
                         {%YAML.AST.Scalar{
-                           value: "<<",
-                           meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 78, column: 3}
+                           value: "retries",
+                           meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 73, column: 3}
                          },
-                         %YAML.AST.Mapping{
-                           pairs: [
-                             {%YAML.AST.Scalar{
-                                value: "retries",
-                                meta: %YAML.AST.Meta{
-                                  tag: "tag:yaml.org,2002:str",
-                                  line: 73,
-                                  column: 3
-                                }
-                              },
-                              %YAML.AST.Scalar{
-                                value: 3,
-                                meta: %YAML.AST.Meta{
-                                  tag: "tag:yaml.org,2002:int",
-                                  line: 73,
-                                  column: 12
-                                }
-                              }},
-                             {%YAML.AST.Scalar{
-                                value: "timeout",
-                                meta: %YAML.AST.Meta{
-                                  tag: "tag:yaml.org,2002:str",
-                                  line: 74,
-                                  column: 3
-                                }
-                              },
-                              %YAML.AST.Scalar{
-                                value: 30,
-                                meta: %YAML.AST.Meta{
-                                  tag: "tag:yaml.org,2002:int",
-                                  line: 74,
-                                  column: 12
-                                }
-                              }},
-                             {%YAML.AST.Scalar{
-                                value: "created_at",
-                                meta: %YAML.AST.Meta{
-                                  tag: "tag:yaml.org,2002:str",
-                                  line: 75,
-                                  column: 3
-                                }
-                              },
-                              %YAML.AST.Scalar{
-                                value: "2025-01-01T00:00:00Z",
-                                meta: %YAML.AST.Meta{
-                                  tag: "tag:yaml.org,2002:str",
-                                  line: 75,
-                                  column: 15
-                                }
-                              }}
-                           ],
-                           meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:map", line: 73, column: 3}
+                         %YAML.AST.Scalar{
+                           value: 3,
+                           meta: %YAML.AST.Meta{
+                             tag: "tag:yaml.org,2002:int",
+                             line: 73,
+                             column: 12
+                           }
+                         }},
+                        {%YAML.AST.Scalar{
+                           value: "timeout",
+                           meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 74, column: 3}
+                         },
+                         %YAML.AST.Scalar{
+                           value: 30,
+                           meta: %YAML.AST.Meta{
+                             tag: "tag:yaml.org,2002:int",
+                             line: 74,
+                             column: 12
+                           }
+                         }},
+                        {%YAML.AST.Scalar{
+                           value: "created_at",
+                           meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 75, column: 3}
+                         },
+                         %YAML.AST.Scalar{
+                           value: "2025-01-01T00:00:00Z",
+                           meta: %YAML.AST.Meta{
+                             tag: "tag:yaml.org,2002:str",
+                             line: 75,
+                             column: 15
+                           }
                          }},
                         {%YAML.AST.Scalar{
                            value: "url",
@@ -734,61 +709,40 @@ defmodule YAMLTest do
                     %YAML.AST.Mapping{
                       pairs: [
                         {%YAML.AST.Scalar{
-                           value: "<<",
-                           meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 83, column: 3}
+                           value: "retries",
+                           meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 73, column: 3}
                          },
-                         %YAML.AST.Mapping{
-                           pairs: [
-                             {%YAML.AST.Scalar{
-                                value: "retries",
-                                meta: %YAML.AST.Meta{
-                                  tag: "tag:yaml.org,2002:str",
-                                  line: 73,
-                                  column: 3
-                                }
-                              },
-                              %YAML.AST.Scalar{
-                                value: 3,
-                                meta: %YAML.AST.Meta{
-                                  tag: "tag:yaml.org,2002:int",
-                                  line: 73,
-                                  column: 12
-                                }
-                              }},
-                             {%YAML.AST.Scalar{
-                                value: "timeout",
-                                meta: %YAML.AST.Meta{
-                                  tag: "tag:yaml.org,2002:str",
-                                  line: 74,
-                                  column: 3
-                                }
-                              },
-                              %YAML.AST.Scalar{
-                                value: 30,
-                                meta: %YAML.AST.Meta{
-                                  tag: "tag:yaml.org,2002:int",
-                                  line: 74,
-                                  column: 12
-                                }
-                              }},
-                             {%YAML.AST.Scalar{
-                                value: "created_at",
-                                meta: %YAML.AST.Meta{
-                                  tag: "tag:yaml.org,2002:str",
-                                  line: 75,
-                                  column: 3
-                                }
-                              },
-                              %YAML.AST.Scalar{
-                                value: "2025-01-01T00:00:00Z",
-                                meta: %YAML.AST.Meta{
-                                  tag: "tag:yaml.org,2002:str",
-                                  line: 75,
-                                  column: 15
-                                }
-                              }}
-                           ],
-                           meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:map", line: 73, column: 3}
+                         %YAML.AST.Scalar{
+                           value: 3,
+                           meta: %YAML.AST.Meta{
+                             tag: "tag:yaml.org,2002:int",
+                             line: 73,
+                             column: 12
+                           }
+                         }},
+                        {%YAML.AST.Scalar{
+                           value: "timeout",
+                           meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 74, column: 3}
+                         },
+                         %YAML.AST.Scalar{
+                           value: 30,
+                           meta: %YAML.AST.Meta{
+                             tag: "tag:yaml.org,2002:int",
+                             line: 74,
+                             column: 12
+                           }
+                         }},
+                        {%YAML.AST.Scalar{
+                           value: "created_at",
+                           meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 75, column: 3}
+                         },
+                         %YAML.AST.Scalar{
+                           value: "2025-01-01T00:00:00Z",
+                           meta: %YAML.AST.Meta{
+                             tag: "tag:yaml.org,2002:str",
+                             line: 75,
+                             column: 15
+                           }
                          }},
                         {%YAML.AST.Scalar{
                            value: "url",
@@ -1062,6 +1016,196 @@ defmodule YAMLTest do
                  "yes_value" => "yes"
                },
                "service_a" => %{
+                 "created_at" => "2025-01-01T00:00:00Z",
+                 "retries" => 3,
+                 "timeout" => 30,
+                 "ip" => "172.16.0.1",
+                 "url" => "https://api.service-a.com"
+               },
+               "service_b" => %{
+                 "created_at" => "2025-01-01T00:00:00Z",
+                 "retries" => 3,
+                 "timeout" => 30,
+                 "ip" => "172.16.0.2",
+                 "url" => "https://api.service-b.com"
+               },
+               "Mark McGwire" => %{"avg" => 0.278, "hr" => 65},
+               "Sammy Sosa" => %{"avg" => 0.288, "hr" => 63},
+               "control" => "\b1998\t1999\t2000\n",
+               "hex esc" => "\r\n is \r\n",
+               "quoted" => " # Not a 'comment'.",
+               "single" => "\"Howdy!\" he cried.",
+               "tie-fighter" => "|\\-*-/|",
+               "unicode" => "Sosa did fine.☺"
+             }
+
+      assert doc4 == "Mark McGwire's year was crippled by a knee injury.\n"
+    end
+
+    test "returns error for invalid :return option", %{yaml: yaml} do
+      assert {:error, %YAML.ArgumentError{option: :return, value: :invalid}} =
+               YAML.decode(yaml, return: :invalid)
+
+      assert_raise YAML.ArgumentError, fn ->
+        YAML.decode!(yaml, return: :invalid)
+      end
+    end
+
+    test "enable_merge: true -- returns merged response", %{yaml: yaml} do
+      assert {:ok, result} = YAML.decode(yaml)
+      assert {:ok, ^result} = YAML.decode(yaml, enable_merge: true)
+      assert [doc1, doc2, doc3, doc4] = result
+
+      assert doc1 == %{
+               "active" => true,
+               "address" => %{"city" => "Lahore", "zip" => 54000},
+               "age" => 25,
+               "binary_data" => "Hello WORLD",
+               "created_at" => "2025-01-01T12:30:45Z",
+               "created_date" => "2025-01-01",
+               "disabled" => false,
+               "empty_field" => nil,
+               "ipv4" => "192.168.1.10",
+               "ipv6" => "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+               "middle_name" => nil,
+               "name" => "Rizu",
+               "price" => 99.99,
+               "skills" => ["Elixir", "JavaScript", "Docker"]
+             }
+
+      assert doc2 == %{
+               "project" => %{
+                 "meta" => %{
+                   "build_time" => "2025-01-10T14:22:00Z",
+                   "published" => false,
+                   "version" => 1.0
+                 },
+                 "name" => "YAML Demo",
+                 "tags" => ["config", "example"]
+               },
+               "users" => [
+                 %{
+                   "active" => true,
+                   "id" => 1,
+                   "ip" => "10.0.0.5",
+                   "last_login" => "2025-01-05T08:00:00Z",
+                   "name" => "Ali"
+                 },
+                 %{
+                   "active" => false,
+                   "email" => nil,
+                   "id" => 2,
+                   "ip" => "10.0.0.8",
+                   "last_login" => nil,
+                   "name" => "Sara"
+                 }
+               ]
+             }
+
+      assert doc3 == %{
+               "defaults" => %{
+                 "created_at" => "2025-01-01T00:00:00Z",
+                 "retries" => 3,
+                 "timeout" => 30
+               },
+               "description" => "This is line one\nThis is line two\n",
+               "misc" => %{
+                 "infinity" => :"+inf",
+                 "no_value" => "no",
+                 "not_a_number" => :nan,
+                 "yes_value" => "yes"
+               },
+               "service_a" => %{
+                 "created_at" => "2025-01-01T00:00:00Z",
+                 "retries" => 3,
+                 "timeout" => 30,
+                 "ip" => "172.16.0.1",
+                 "url" => "https://api.service-a.com"
+               },
+               "service_b" => %{
+                 "created_at" => "2025-01-01T00:00:00Z",
+                 "retries" => 3,
+                 "timeout" => 30,
+                 "ip" => "172.16.0.2",
+                 "url" => "https://api.service-b.com"
+               },
+               "Mark McGwire" => %{"avg" => 0.278, "hr" => 65},
+               "Sammy Sosa" => %{"avg" => 0.288, "hr" => 63},
+               "control" => "\b1998\t1999\t2000\n",
+               "hex esc" => "\r\n is \r\n",
+               "quoted" => " # Not a 'comment'.",
+               "single" => "\"Howdy!\" he cried.",
+               "tie-fighter" => "|\\-*-/|",
+               "unicode" => "Sosa did fine.☺"
+             }
+
+      assert doc4 == "Mark McGwire's year was crippled by a knee injury.\n"
+    end
+
+    test "enable_merge: false -- returns merge operator as key response", %{yaml: yaml} do
+      assert {:ok, result} = YAML.decode(yaml, enable_merge: false)
+      assert [doc1, doc2, doc3, doc4] = result
+
+      assert doc1 == %{
+               "active" => true,
+               "address" => %{"city" => "Lahore", "zip" => 54000},
+               "age" => 25,
+               "binary_data" => "Hello WORLD",
+               "created_at" => "2025-01-01T12:30:45Z",
+               "created_date" => "2025-01-01",
+               "disabled" => false,
+               "empty_field" => nil,
+               "ipv4" => "192.168.1.10",
+               "ipv6" => "2001:0db8:85a3:0000:0000:8a2e:0370:7334",
+               "middle_name" => nil,
+               "name" => "Rizu",
+               "price" => 99.99,
+               "skills" => ["Elixir", "JavaScript", "Docker"]
+             }
+
+      assert doc2 == %{
+               "project" => %{
+                 "meta" => %{
+                   "build_time" => "2025-01-10T14:22:00Z",
+                   "published" => false,
+                   "version" => 1.0
+                 },
+                 "name" => "YAML Demo",
+                 "tags" => ["config", "example"]
+               },
+               "users" => [
+                 %{
+                   "active" => true,
+                   "id" => 1,
+                   "ip" => "10.0.0.5",
+                   "last_login" => "2025-01-05T08:00:00Z",
+                   "name" => "Ali"
+                 },
+                 %{
+                   "active" => false,
+                   "email" => nil,
+                   "id" => 2,
+                   "ip" => "10.0.0.8",
+                   "last_login" => nil,
+                   "name" => "Sara"
+                 }
+               ]
+             }
+
+      assert doc3 == %{
+               "defaults" => %{
+                 "created_at" => "2025-01-01T00:00:00Z",
+                 "retries" => 3,
+                 "timeout" => 30
+               },
+               "description" => "This is line one\nThis is line two\n",
+               "misc" => %{
+                 "infinity" => :"+inf",
+                 "no_value" => "no",
+                 "not_a_number" => :nan,
+                 "yes_value" => "yes"
+               },
+               "service_a" => %{
                  "<<" => %{
                    "created_at" => "2025-01-01T00:00:00Z",
                    "retries" => 3,
@@ -1090,15 +1234,6 @@ defmodule YAMLTest do
              }
 
       assert doc4 == "Mark McGwire's year was crippled by a knee injury.\n"
-    end
-
-    test "returns error for invalid :return option", %{yaml: yaml} do
-      assert {:error, %YAML.ArgumentError{option: :return, value: :invalid}} =
-               YAML.decode(yaml, return: :invalid)
-
-      assert_raise YAML.ArgumentError, fn ->
-        YAML.decode!(yaml, return: :invalid)
-      end
     end
 
     test "returns error for invalid :detailed option", %{yaml: yaml} do
