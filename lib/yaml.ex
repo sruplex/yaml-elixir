@@ -3,6 +3,7 @@ defmodule YAML do
   Documentation for YAML.
   """
   alias YAML.Parser
+  alias YAML.Merge
   alias YAML.ArgumentError
 
   @doc """
@@ -43,7 +44,7 @@ defmodule YAML do
 
   def decode(binary, opts \\ []) when is_binary(binary) do
     with {:ok, opts} <- validate_opts(opts),
-         {:ok, yaml} <- Parser.parse(binary, extract_parser_opts(opts)) do
+         {:ok, yaml} <- Parser.parse(binary) do
       {:ok, apply_options(yaml, opts)}
     end
   end
@@ -80,7 +81,7 @@ defmodule YAML do
         error = ArgumentError.invalid_option(:detailed, v, "must be a boolean")
         {:halt, {:error, error}}
 
-      {:enable_merge, v} = opt, {:ok, acc} when v in [true, false] ->
+      {:enable_merge, v} = opt, {:ok, acc} when is_boolean(v) ->
         {:cont, {:ok, [opt | acc]}}
 
       {:enable_merge, v}, {:ok, _acc} ->
@@ -93,19 +94,23 @@ defmodule YAML do
     end)
   end
 
+  @option_priority %{
+    enable_merge: 1,
+    detailed: 2,
+    return: 3
+  }
+
   defp apply_options(yaml, opts) do
-    Enum.reduce(opts, yaml, fn
+    opts
+    |> Enum.sort_by(fn {key, _} -> Map.get(@option_priority, key, 999) end)
+    |> Enum.reduce(yaml, fn
+      {:enable_merge, true}, yaml -> Merge.apply(yaml)
+      {:enable_merge, false}, yaml -> yaml
       {:return, :auto}, yaml -> yaml
       {:return, :all_documents}, yaml -> yaml
       {:return, :first_document}, [first | _] -> first
       {:detailed, true}, yaml -> yaml
       {:detailed, false}, yaml -> Parser.simplify(yaml)
-      {:enable_merge, true}, yaml -> yaml
-      {:enable_merge, false}, yaml -> yaml
     end)
-  end
-
-  defp extract_parser_opts(opts) do
-    Keyword.take(opts, [:enable_merge])
   end
 end
