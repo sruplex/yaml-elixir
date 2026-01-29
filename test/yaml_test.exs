@@ -1210,10 +1210,15 @@ defmodule YAMLTest do
                    "name" => "node_4",
                    "critical" => false,
                    "timeout" => 100,
-                   # https://yaml-online-parser.appspot.com/ keeps both keys merged,
-                   # but in our case we only keep the last merge key (service_x), so we don't get:
+                   # NOTE: Yamerl parser limitation - when multiple << keys appear in sequence:
+                   #   <<: *service_y
+                   #   <<: *service_x
+                   # Yamerl only processes the last << key (*service_x) and ignores the rest.
+                   # This means keys from service_y (like "elixir") won't be included, but
+                   # keys from service_x (like "javascript") will be present in the merged result.
+                   #
+                   # Workaround: Use array syntax instead: <<: [*service_x, *service_y]
                    # "elixir" => "phoenix",
-                   # We only get the result from the second merge (service_x):
                    "javascript" => "nodejs"
                  },
                  "node_5" => %{
