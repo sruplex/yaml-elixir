@@ -31,3 +31,21 @@ defmodule YAML.ParsingError do
   defp normalize(:yamerl_parsing_error), do: :parse_error
   defp normalize(type), do: type
 end
+
+defmodule YAML.ArgumentError do
+  defexception [:message, :option, :value]
+
+  @type t :: %__MODULE__{
+          message: String.t(),
+          option: atom() | nil,
+          value: term()
+        }
+
+  def invalid_option(option, value, reason \\ nil) do
+    %__MODULE__{
+      option: option,
+      value: value,
+      message: reason || "invalid value for option #{inspect(option)}"
+    }
+  end
+end

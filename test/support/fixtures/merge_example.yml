@@ -1,0 +1,59 @@
+service_x: &service_x
+  name: service_x
+  critical: false
+  timeout: 100
+  javascript: nodejs
+
+service_y: &service_y
+  name: service_y
+  critical: true
+  timeout: 500
+  elixir: phoenix
+
+service_z: &service_z
+  name: service_z
+  level_1:
+    rust: rocket
+    level_2:
+      nested: so_deep
+
+node_1:
+  <<: *service_x
+  name: node_1
+
+node_2:
+  name: should_be_overridden
+  <<: *service_y
+  timeout: 300
+
+node_3:
+  <<: [*service_x, *service_y]
+  name: node_3
+
+node_4:
+  <<: *service_y
+  <<: *service_x
+  name: node_4
+
+node_5:
+  <<: *service_x
+  name: node_5
+  nested:
+    <<: *service_y
+    name: nested
+  deep_nested:
+    <<: *service_z
+    level_1:
+      rust: yew
+      level_2:
+        complex: true
+    
+node_7:
+  - <<: *service_x
+    name: node_7_first
+  - <<: [*service_y, *service_x]
+    name: node_7_second
+  - <<: [*service_y, *service_z]
+    name: node_7_third
+    level_1:
+      rust: yew

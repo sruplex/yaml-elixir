@@ -3,6 +3,8 @@ defmodule YAML do
   Documentation for YAML.
   """
   alias YAML.Parser
+  alias YAML.Merge
+  alias YAML.ArgumentError
 
   @doc """
    Decodes YAML strings into Elixir data structures or AST.
@@ -22,6 +24,11 @@ defmodule YAML do
           list with all decoded documents.
         * `:first_document` - returns only the first decoded YAML document.
         * `:all_documents` - returns all decoded YAML documents as a list.
+
+    * `:enable_merge` - controls YAML merge key behavior (default: `true`)
+
+        * `true` (default) - processes `<<` as merge keys (YAML 1.1 behavior)
+        * `false` - treats `<<` as regular keys (YAML 1.2+ behavior)
 
 
   ## Examples
@@ -49,7 +56,7 @@ defmodule YAML do
     end
   end
 
-  @default_opts [return: :auto, detailed: false]
+  @default_opts [return: :auto, detailed: false, enable_merge: true]
   defp validate_opts(opts) do
     @default_opts
     |> Keyword.merge(opts)
@@ -58,21 +65,47 @@ defmodule YAML do
         {:cont, {:ok, [opt | acc]}}
 
       {:return, v}, {:ok, _acc} ->
-        {:halt, {:error, "invalid :return option #{inspect(v)} passed"}}
+        error =
+          ArgumentError.invalid_option(
+            :return,
+            v,
+            "must be one of [:auto, :all_documents, :first_document]"
+          )
 
-      {:detailed, v} = opt, {:ok, acc} when v in [true, false] ->
+        {:halt, {:error, error}}
+
+      {:detailed, v} = opt, {:ok, acc} when is_boolean(v) ->
         {:cont, {:ok, [opt | acc]}}
 
       {:detailed, v}, {:ok, _acc} ->
-        {:halt, {:error, "invalid :detailed option #{inspect(v)} passed"}}
+        error = ArgumentError.invalid_option(:detailed, v, "must be a boolean")
+        {:halt, {:error, error}}
 
-      unknown, {:ok, _acc} ->
-        {:halt, {:error, "unknown #{inspect(unknown)} option passed"}}
+      {:enable_merge, v} = opt, {:ok, acc} when is_boolean(v) ->
+        {:cont, {:ok, [opt | acc]}}
+
+      {:enable_merge, v}, {:ok, _acc} ->
+        error = ArgumentError.invalid_option(:enable_merge, v, "must be a boolean")
+        {:halt, {:error, error}}
+
+      {key, _val}, {:ok, _acc} ->
+        error = ArgumentError.invalid_option(key, nil, "unknown option")
+        {:halt, {:error, error}}
     end)
   end
 
+  @option_priority %{
+    enable_merge: 1,
+    detailed: 2,
+    return: 3
+  }
+
   defp apply_options(yaml, opts) do
-    Enum.reduce(opts, yaml, fn
+    opts
+    |> Enum.sort_by(fn {key, _} -> Map.get(@option_priority, key, 999) end)
+    |> Enum.reduce(yaml, fn
+      {:enable_merge, true}, yaml -> Merge.apply(yaml)
+      {:enable_merge, false}, yaml -> yaml
       {:return, :auto}, yaml -> yaml
       {:return, :all_documents}, yaml -> yaml
       {:return, :first_document}, [first | _] -> first
