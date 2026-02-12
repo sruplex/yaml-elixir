@@ -1268,5 +1268,46 @@ defmodule YAMLTest do
                  ]
                }
     end
+
+    test "atomize_keys: false -- keeps keys as binary strings (default)", %{yaml: yaml} do
+      assert {:ok, result} = YAML.decode(yaml)
+      assert {:ok, ^result} = YAML.decode(yaml, atomize_keys: false)
+      assert [doc1, doc2, doc3, _doc4] = result
+
+      assert doc1 |> Map.keys() |> Enum.all?(&is_binary/1)
+      assert doc2 |> Map.keys() |> Enum.all?(&is_binary/1)
+      assert doc3 |> Map.keys() |> Enum.all?(&is_binary/1)
+    end
+
+    test "atomize_keys: :safe -- converts only existing atoms", %{yaml: _yaml} do
+      yaml = """
+      name: "Rizu"
+      ag1e: 25
+      pricine: 99.99
+      skillsm:
+        - Elixir
+        - JavaScript
+        - Docker
+      """
+
+      {:ok, [doc1]} = YAML.decode(yaml, atomize_keys: :safe)
+
+      # :name already exists as atom in another yaml
+      assert doc1[:name] == "Rizu"
+
+      # Unknown keys stay strings
+      assert doc1["ag1e"] == 25
+      assert doc1["pricine"] == 99.99
+      assert doc1["skillsm"] == ["Elixir", "JavaScript", "Docker"]
+    end
+
+    test "atomize_keys: true -- converts all keys to atoms", %{yaml: yaml} do
+      {:ok, result} = YAML.decode(yaml, atomize_keys: true)
+      assert [doc1, doc2, doc3, _doc4] = result
+
+      assert doc1 |> Map.keys() |> Enum.all?(&is_atom/1)
+      assert doc2 |> Map.keys() |> Enum.all?(&is_atom/1)
+      assert doc3 |> Map.keys() |> Enum.all?(&is_atom/1)
+    end
   end
 end

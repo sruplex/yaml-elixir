@@ -97,6 +97,13 @@ defmodule YAML.Parser do
     %Scalar{value: value, meta: nil}
   end
 
+  defp build_meta(tag, meta) do
+    %Meta{tag: to_string(tag), line: meta[:line], column: meta[:column]}
+  end
+
+  defp normalize_integer(v) when is_integer(v), do: v
+  defp normalize_integer(_), do: 0
+
   @doc """
   Simplifies AST into plain Elixir data structures (maps, lists).
 
@@ -112,39 +119,47 @@ defmodule YAML.Parser do
            }
          }
        ]
-    iex>YAML.Parser.simplify(ast)
+    iex>YAML.Parser.simplify(ast, atomize_keys)
     [%{"key" => "value"}]
 
   """
+  def simplify(ast, atomize_keys \\ false)
 
-  def simplify(%Document{root: root}) do
-    simplify(root)
+  def simplify(%Document{root: root}, atomize_keys) do
+    simplify(root, atomize_keys)
   end
 
-  def simplify(%Mapping{pairs: pairs}) do
+  def simplify(%Mapping{pairs: pairs}, atomize_keys) do
     Map.new(pairs, fn {key, value} ->
-      {simplify(key), simplify(value)}
+      {key |> simplify(atomize_keys) |> atomize_key(atomize_keys), simplify(value, atomize_keys)}
     end)
   end
 
-  def simplify(%List{items: items}) do
-    Enum.map(items, &simplify/1)
+  def simplify(%List{items: items}, atomize_keys) do
+    Enum.map(items, &simplify(&1, atomize_keys))
   end
 
-  def simplify(%Scalar{value: value}) do
+  def simplify(%Scalar{value: value}, _atomize_keys) do
     value
   end
 
-  def simplify(ast_documents) when is_list(ast_documents) do
-    Enum.map(ast_documents, &simplify/1)
+  def simplify(ast_documents, atomize_keys) when is_list(ast_documents) do
+    Enum.map(ast_documents, &simplify(&1, atomize_keys))
   end
 
-  def simplify(value), do: value
+  def simplify(value, _atomize_keys), do: value
 
-  defp build_meta(tag, meta) do
-    %Meta{tag: to_string(tag), line: meta[:line], column: meta[:column]}
+  defp atomize_key(key, false) when is_binary(key), do: key
+  defp atomize_key(key, nil) when is_binary(key), do: key
+
+  defp atomize_key(key, :safe) when is_binary(key) do
+    try do
+      String.to_existing_atom(key)
+    rescue
+      ArgumentError -> key
+    end
   end
 
-  defp normalize_integer(v) when is_integer(v), do: v
-  defp normalize_integer(_), do: 0
+  defp atomize_key(key, true) when is_binary(key), do: String.to_atom(key)
+  defp atomize_key(key, _), do: key
 end

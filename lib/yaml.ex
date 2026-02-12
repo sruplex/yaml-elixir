@@ -30,6 +30,12 @@ defmodule YAML do
         * `true` (default) - processes `<<` as merge keys (YAML 1.1 behavior)
         * `false` - treats `<<` as regular keys (YAML 1.2+ behavior)
 
+    * `:atomize_keys` - controls whether map keys are converted to atoms (default: `false`)
+
+        * `false` (default) - keeps all keys as binary strings
+        * `:safe` - converts keys to atoms only if the atom already exists in the atom table
+        * `true` - converts all keys to atoms (only use for trusted input)
+
 
   ## Examples
 
@@ -56,7 +62,7 @@ defmodule YAML do
     end
   end
 
-  @default_opts [return: :auto, detailed: false, enable_merge: true]
+  @default_opts [return: :auto, detailed: false, enable_merge: true, atomize_keys: false]
   defp validate_opts(opts) do
     @default_opts
     |> Keyword.merge(opts)
@@ -88,6 +94,13 @@ defmodule YAML do
         error = ArgumentError.invalid_option(:enable_merge, v, "must be a boolean")
         {:halt, {:error, error}}
 
+      {:atomize_keys, v} = opt, {:ok, acc} when is_boolean(v) or v == :safe ->
+        {:cont, {:ok, [opt | acc]}}
+
+      {:atomize_keys, v}, {:ok, _acc} ->
+        error = ArgumentError.invalid_option(:atomize_keys, v, "must be a boolean or :safe")
+        {:halt, {:error, error}}
+
       {key, _val}, {:ok, _acc} ->
         error = ArgumentError.invalid_option(key, nil, "unknown option")
         {:halt, {:error, error}}
@@ -104,13 +117,14 @@ defmodule YAML do
     opts
     |> Enum.sort_by(fn {key, _} -> Map.get(@option_priority, key, 999) end)
     |> Enum.reduce(yaml, fn
-      {:enable_merge, true}, yaml -> Merge.apply(yaml)
-      {:enable_merge, false}, yaml -> yaml
       {:return, :auto}, yaml -> yaml
       {:return, :all_documents}, yaml -> yaml
       {:return, :first_document}, [first | _] -> first
       {:detailed, true}, yaml -> yaml
-      {:detailed, false}, yaml -> Parser.simplify(yaml)
+      {:detailed, false}, yaml -> Parser.simplify(yaml, opts[:atomize_keys])
+      {:enable_merge, true}, yaml -> Merge.apply(yaml)
+      {:enable_merge, false}, yaml -> yaml
+      {:atomize_keys, _}, yaml -> yaml
     end)
   end
 end
