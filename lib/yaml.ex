@@ -6,6 +6,15 @@ defmodule YAML do
   alias YAML.Merge
   alias YAML.ArgumentError
 
+  @valid_yamerl_opts [
+    :schema,
+    :node_mods,
+    :keep_duplicate_keys
+  ]
+
+  @valid_schema_values [:failsafe, :json, :core, :yaml11]
+  @valid_map_node_format_values [:map, :proplist]
+
   @doc """
    Decodes YAML strings into Elixir data structures or AST.
   ## Options
@@ -36,6 +45,13 @@ defmodule YAML do
         * `:safe` - converts keys to atoms only if the atom already exists in the atom table
         * `true` - converts all keys to atoms (only use for trusted input)
 
+    * `:yamerl_opts` - list of additional options passed directly to `:yamerl_constr`
+      (default: `[]`). Note: `:str_node_as_binary` and `:detailed_constr` are always
+      set internally and should not be passed here.
+
+        * `{:schema, :failsafe | :json | :core | :yaml11}` - YAML schema for type resolution (default: `:core`)
+        * `{:node_mods, [module()]}` - extra modules for custom node types (default: `[]`)
+        * `{:keep_duplicate_keys, boolean()}` - preserve duplicate map keys (default: `false`)
 
   ## Examples
 
@@ -45,12 +61,15 @@ defmodule YAML do
       iex> YAML.decode("a: 1", return: :first_document)
       {:ok, %{"a" => 1}}
 
+      iex> YAML.decode("a: 1", yamerl_opts: [{:schema, :core}, {:map_node_format, :map}])
+      {:ok, [%{"a" => 1}]}
 
   """
 
   def decode(binary, opts \\ []) when is_binary(binary) do
     with {:ok, opts} <- validate_opts(opts),
-         {:ok, yaml} <- Parser.parse(binary) do
+         yamerl_opts = Keyword.get(opts, :yamerl_opts, []),
+         {:ok, yaml} <- Parser.parse(binary, yamerl_opts) do
       {:ok, apply_options(yaml, opts)}
     end
   end
@@ -62,7 +81,14 @@ defmodule YAML do
     end
   end
 
-  @default_opts [return: :auto, detailed: false, enable_merge: true, atomize_keys: false]
+  @default_opts [
+    return: :auto,
+    detailed: false,
+    enable_merge: true,
+    atomize_keys: false,
+    yamerl_opts: []
+  ]
+
   defp validate_opts(opts) do
     @default_opts
     |> Keyword.merge(opts)
@@ -101,8 +127,62 @@ defmodule YAML do
         error = ArgumentError.invalid_option(:atomize_keys, v, "must be a boolean or :safe")
         {:halt, {:error, error}}
 
+      {:yamerl_opts, v}, {:ok, acc} when is_list(v) ->
+        case validate_yamerl_opts(v) do
+          :ok -> {:cont, {:ok, [{:yamerl_opts, v} | acc]}}
+          {:error, _} = error -> {:halt, error}
+        end
+
+      {:yamerl_opts, v}, {:ok, _acc} ->
+        error = ArgumentError.invalid_option(:yamerl_opts, v, "must be a list")
+        {:halt, {:error, error}}
+
       {key, _val}, {:ok, _acc} ->
         error = ArgumentError.invalid_option(key, nil, "unknown option")
+        {:halt, {:error, error}}
+    end)
+  end
+
+  defp validate_yamerl_opts(yamerl_opts) do
+    Enum.reduce_while(yamerl_opts, :ok, fn
+      {:schema, v}, :ok when v in @valid_schema_values ->
+        {:cont, :ok}
+
+      {:schema, v}, :ok ->
+        error =
+          ArgumentError.invalid_option(
+            :schema,
+            v,
+            "must be one of #{inspect(@valid_schema_values)}"
+          )
+
+        {:halt, {:error, error}}
+
+      {:node_mods, v}, :ok when is_list(v) ->
+        {:cont, :ok}
+
+      {:node_mods, v}, :ok ->
+        error = ArgumentError.invalid_option(:node_mods, v, "must be a list of modules")
+        {:halt, {:error, error}}
+
+      {:map_node_format, v}, :ok when v in @valid_map_node_format_values ->
+        {:cont, :ok}
+
+      {:keep_duplicate_keys, v}, :ok when is_boolean(v) ->
+        {:cont, :ok}
+
+      {:keep_duplicate_keys, v}, :ok ->
+        error = ArgumentError.invalid_option(:keep_duplicate_keys, v, "must be a boolean")
+        {:halt, {:error, error}}
+
+      {key, _}, :ok ->
+        error =
+          ArgumentError.invalid_option(
+            key,
+            nil,
+            "unknown yamerl option. Must be one of #{inspect(@valid_yamerl_opts)}"
+          )
+
         {:halt, {:error, error}}
     end)
   end
@@ -125,6 +205,7 @@ defmodule YAML do
       {:enable_merge, true}, yaml -> Merge.apply(yaml)
       {:enable_merge, false}, yaml -> yaml
       {:atomize_keys, _}, yaml -> yaml
+      {:yamerl_opts, _}, yaml -> yaml
     end)
   end
 end

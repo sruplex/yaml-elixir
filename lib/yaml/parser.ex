@@ -4,7 +4,6 @@ defmodule YAML.Parser do
   """
 
   alias YAML.AST.{Document, Scalar, List, Mapping, Meta}
-  @yamerl_opts [:str_node_as_binary, :detailed_constr]
 
   @doc """
   Parses YAML string into AST (Abstract Syntax Tree) with full metadata.
@@ -27,26 +26,26 @@ defmodule YAML.Parser do
     ]
   """
 
-  def parse(string) when is_binary(string) do
+  def parse(string, yamerl_opts) when is_binary(string) do
+    opts = [:str_node_as_binary, :detailed_constr | yamerl_opts]
+
     {:ok,
      string
-     |> :yamerl_constr.string(@yamerl_opts)
+     |> :yamerl_constr.string(opts)
      |> do_parse()}
   catch
     {:yamerl_exception, error} ->
       {:error, YAML.ParsingError.build_error(error)}
   end
 
-  def parse!(string) when is_binary(string) do
-    case parse(string) do
+  def parse!(string, yamerl_opts) when is_binary(string) do
+    case parse(string, yamerl_opts) do
       {:ok, yaml} -> yaml
       {:error, error} -> raise error
     end
   end
 
-  defp do_parse({:yamerl_doc, root}) do
-    %Document{root: do_parse(root)}
-  end
+  defp do_parse({:yamerl_doc, root}), do: %Document{root: do_parse(root)}
 
   defp do_parse({:yamerl_map, _, tag, meta, pairs}) do
     %Mapping{
