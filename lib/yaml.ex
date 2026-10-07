@@ -27,11 +27,10 @@ defmodule YAML do
     * `:return` - selects which decoded YAML documents are returned. It may be
       one of `:auto`, `:first_document` or `:all_documents`.
 
-        * `:auto` (default) - automatically determines the return format based on
-          the input. Single-document input returns the decoded value directly
-          single document (map or list), while multi-document input returns a
-          list with all decoded documents.
-        * `:first_document` - returns only the first decoded YAML document.
+        * `:auto` (default) - returns the document itself for single-document
+          input, or a list for multi-document input.
+        * `:first_document` - returns only the first decoded YAML document, or
+          `nil` if the input is empty.
         * `:all_documents` - returns all decoded YAML documents as a list.
 
     * `:enable_merge` - controls YAML merge key behavior (default: `true`)
@@ -56,13 +55,16 @@ defmodule YAML do
   ## Examples
 
       iex> YAML.decode("- a: 1")
-      {:ok, [[%{"a" => 1}]]}
+      {:ok, [%{"a" => 1}]}
+
+      iex> YAML.decode("a: 1\\n---\\nb: 2")
+      {:ok, [%{"a" => 1}, %{"b" => 2}]}
 
       iex> YAML.decode("a: 1", return: :first_document)
       {:ok, %{"a" => 1}}
 
       iex> YAML.decode("a: 1", yamerl_opts: [{:schema, :core}, {:map_node_format, :map}])
-      {:ok, [%{"a" => 1}]}
+      {:ok, %{"a" => 1}}
 
   """
 
@@ -137,8 +139,8 @@ defmodule YAML do
         error = ArgumentError.invalid_option(:yamerl_opts, v, "must be a list")
         {:halt, {:error, error}}
 
-      {key, _val}, {:ok, _acc} ->
-        error = ArgumentError.invalid_option(key, nil, "unknown option")
+      {key, val}, {:ok, _acc} ->
+        error = ArgumentError.invalid_option(key, val, "unknown option #{inspect(key)}")
         {:halt, {:error, error}}
     end)
   end
@@ -184,6 +186,16 @@ defmodule YAML do
           )
 
         {:halt, {:error, error}}
+
+      opt, :ok ->
+        error =
+          ArgumentError.invalid_option(
+            opt,
+            nil,
+            "invalid yamerl option, expected a {key, value} tuple"
+          )
+
+        {:halt, {:error, error}}
     end)
   end
 
@@ -197,8 +209,11 @@ defmodule YAML do
     opts
     |> Enum.sort_by(fn {key, _} -> Map.get(@option_priority, key, 999) end)
     |> Enum.reduce(yaml, fn
+      {:return, :auto}, [] -> nil
+      {:return, :auto}, [single] -> single
       {:return, :auto}, yaml -> yaml
       {:return, :all_documents}, yaml -> yaml
+      {:return, :first_document}, [] -> nil
       {:return, :first_document}, [first | _] -> first
       {:detailed, true}, yaml -> yaml
       {:detailed, false}, yaml -> Parser.simplify(yaml, opts[:atomize_keys])
