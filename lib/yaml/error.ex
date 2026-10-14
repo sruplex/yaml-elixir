@@ -49,3 +49,29 @@ defmodule YAML.ArgumentError do
     }
   end
 end
+
+defmodule YAML.EncodeError do
+  defexception [:message, :term, :cause]
+
+  @type t :: %__MODULE__{
+          message: String.t(),
+          term: term(),
+          cause: :unsupported_type | :invalid_key
+        }
+
+  def unsupported(term, type) do
+    %__MODULE__{
+      term: term,
+      cause: :unsupported_type,
+      message: "cannot encode #{type}"
+    }
+  end
+
+  def invalid_key(key, type) do
+    %__MODULE__{
+      term: key,
+      cause: :invalid_key,
+      message: "cannot encode #{type} as a map key"
+    }
+  end
+end
