@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.3.0 (2026-10-14)
+
 ### Breaking
 
 - `YAML.decode/2` returns a single document directly instead of a one-element list,
@@ -13,6 +15,7 @@
 - `return: :first_document` returns `nil` for empty input instead of crashing.
 - Non-tuple `yamerl_opts` return an error instead of crashing.
 - Unknown option errors name the option.
+- Hex package and documentation links point to the right GitHub repository.
 
 ## v0.2.0 (2026-08-30)
 
