@@ -1053,11 +1053,47 @@ defmodule YAMLTest do
     end
 
     test "returns error for unknown option", %{yaml: yaml} do
-      assert {:error, %YAML.ArgumentError{option: :unknown_option, value: nil}} =
-               YAML.decode(yaml, unknown_option: :value)
+      assert {:error,
+              %YAML.ArgumentError{
+                message: "unknown option :unknown_option",
+                option: :unknown_option,
+                value: :value
+              }} = YAML.decode(yaml, unknown_option: :value)
 
       assert_raise YAML.ArgumentError, fn ->
         YAML.decode!(yaml, unknown_option: :value)
+      end
+    end
+
+    test "return: :auto returns the document itself for single-document input" do
+      assert {:ok, %{"a" => 1}} = YAML.decode("a: 1")
+      assert {:ok, ["x", "y"]} = YAML.decode("- x\n- y")
+      assert {:ok, nil} = YAML.decode("")
+    end
+
+    test "return: :auto returns a list for multi-document input" do
+      assert {:ok, [%{"a" => 1}, %{"b" => 2}]} = YAML.decode("a: 1\n---\nb: 2")
+    end
+
+    test "return: :all_documents always returns a list" do
+      assert {:ok, [%{"a" => 1}]} = YAML.decode("a: 1", return: :all_documents)
+    end
+
+    test "return: :first_document returns nil for empty input" do
+      assert {:ok, nil} = YAML.decode("", return: :first_document)
+      assert YAML.decode!("", return: :first_document) == nil
+
+      # :all_documents tells an empty input apart from a null document
+      assert {:ok, []} = YAML.decode("", return: :all_documents)
+      assert {:ok, [nil]} = YAML.decode("~", return: :all_documents)
+    end
+
+    test "returns error for yamerl options that are not tuples" do
+      for opt <- [:foo, :str_node_as_binary] do
+        assert {:error, %YAML.ArgumentError{option: ^opt, message: message}} =
+                 YAML.decode("a: 1", yamerl_opts: [opt])
+
+        assert message =~ "expected a {key, value} tuple"
       end
     end
 
@@ -1162,7 +1198,7 @@ defmodule YAMLTest do
     test "enable_merge: true -- respects merge order", %{merge_yaml: merge_yaml} do
       assert {:ok, result} = YAML.decode(merge_yaml)
       assert {:ok, ^result} = YAML.decode(merge_yaml, enable_merge: true)
-      assert [doc1] = result
+      assert %{} = doc1 = result
 
       assert doc1 ==
                %{
@@ -1290,7 +1326,7 @@ defmodule YAMLTest do
         - Docker
       """
 
-      {:ok, [doc1]} = YAML.decode(yaml, atomize_keys: :safe)
+      {:ok, doc1} = YAML.decode(yaml, atomize_keys: :safe)
 
       # :name already exists as atom in another yaml
       assert doc1[:name] == "Rizu"
