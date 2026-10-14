@@ -28,7 +28,7 @@ defmodule YAML do
       one of `:auto`, `:first_document` or `:all_documents`.
 
         * `:auto` (default) - returns the document itself for single-document
-          input, or a list for multi-document input.
+          input, a list for multi-document input, or `nil` for empty input.
         * `:first_document` - returns only the first decoded YAML document, or
           `nil` if the input is empty.
         * `:all_documents` - returns all decoded YAML documents as a list.
