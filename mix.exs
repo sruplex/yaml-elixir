@@ -3,8 +3,8 @@ defmodule YAML.MixProject do
 
   @app :yaml
   @name "YAML"
-  @version "0.2.0"
-  @github "https://github.com/sruplex/#{@app}"
+  @version "0.3.0"
+  @github "https://github.com/sruplex/yaml-elixir"
 
   # NOTE:
   # To publish package or update docs, use the `docs`
@@ -32,7 +32,8 @@ defmodule YAML.MixProject do
       docs: [
         main: @name,
         canonical: "https://hexdocs.pm/#{@app}",
-        extras: ["README.md"]
+        source_ref: "v#{@version}",
+        extras: ["README.md", "CHANGELOG.md"]
       ]
     ]
   end
@@ -66,7 +67,7 @@ defmodule YAML.MixProject do
       name: @app,
       maintainers: ["Sruplex", "Sheharyar Naseer"],
       licenses: ["MIT"],
-      files: ~w(mix.exs lib README.md),
+      files: ~w(mix.exs lib README.md CHANGELOG.md),
       links: %{"GitHub" => @github}
     ]
   end
