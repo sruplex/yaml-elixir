@@ -12,6 +12,7 @@
 
 - `YAML.encode/2` and `YAML.encode!/2`, for Elixir data, a `YAML.AST.Document` or a list of them (#18).
 - `YAML.encode_to_iodata/2` and `YAML.encode_to_iodata!/2` (#18).
+- `YAML.encode_stream/2` and `YAML.encode_stream!/2` (#19).
 - `:sort_maps` encode option to write map keys in sorted order (#18).
 - `YAML.EncodeError`, with `:cause` and the `:location` of the value that failed (#9).
 

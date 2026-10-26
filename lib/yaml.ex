@@ -184,6 +184,63 @@ defmodule YAML do
     end
   end
 
+  @doc """
+  Lazily encodes each item of an enumerable as one YAML document, yielding
+  `{:ok, iodata}` or `{:error, error}` for each. Raises `YAML.ArgumentError` on invalid options.
+
+  ## Examples
+
+      iex> [%{"a" => 1}, {1, 2}] |> YAML.encode_stream() |> Enum.map(&elem(&1, 0))
+      [:ok, :error]
+
+  """
+  @spec encode_stream(Enumerable.t(), keyword()) ::
+          Enumerable.t({:ok, iodata()} | {:error, EncodeError.t()})
+  def encode_stream(enumerable, opts \\ []) when is_list(opts) do
+    sort =
+      case validate_encode_opts(opts, false) do
+        {:ok, sort} -> sort
+        {:error, error} -> raise error
+      end
+
+    enumerable
+    |> Stream.with_index()
+    |> Stream.map(fn {item, index} ->
+      written =
+        if match?(%Document{}, item), do: Encode.document(item), else: Encode.data(item, sort)
+
+      # Adds the item's index to the location of its error
+      with {:error, error} <- written, do: {:error, EncodeError.prepend_location(error, index)}
+    end)
+  end
+
+  @doc """
+  Same as `encode_stream/2`, but yields iodata and raises on error.
+
+  ## Examples
+
+      iex> stream = YAML.encode_stream!([%{"a" => 1}, [1, 2]])
+      iex> stream |> Enum.to_list() |> IO.iodata_to_binary()
+      "---\\na: 1\\n---\\n- 1\\n- 2\\n"
+
+  To write a file:
+
+      data
+      |> YAML.encode_stream!()
+      |> Stream.into(File.stream!("out.yml", [:delayed_write]))
+      |> Stream.run()
+
+  """
+  @spec encode_stream!(Enumerable.t(), keyword()) :: Enumerable.t(iodata())
+  def encode_stream!(enumerable, opts \\ []) when is_list(opts) do
+    enumerable
+    |> encode_stream(opts)
+    |> Stream.map(fn
+      {:ok, iodata} -> iodata
+      {:error, error} -> raise error
+    end)
+  end
+
   # Returns the :sort_maps value, the only encode option
   defp validate_encode_opts([], sort), do: {:ok, sort}
 
