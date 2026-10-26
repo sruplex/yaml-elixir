@@ -37,7 +37,7 @@ defmodule YAML.ArgumentError do
 
   @type t :: %__MODULE__{
           message: String.t(),
-          option: atom() | nil,
+          option: term(),
           value: term()
         }
 
