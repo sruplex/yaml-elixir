@@ -599,4 +599,103 @@ defmodule YAML.EncodeTest do
       end
     end
   end
+
+  describe "multi-line strings" do
+    test "chomping indicator follows the final newlines" do
+      assert emit(%{"s" => "a\nb\n"}) == "s: |\n  a\n  b\n"
+      assert emit(%{"s" => "a\nb"}) == "s: |-\n  a\n  b\n"
+      assert emit(%{"s" => "a\nb\n\n"}) == "s: |+\n  a\n  b\n\n"
+    end
+
+    test "lines are kept exactly" do
+      assert emit(%{"s" => "a\n\nb\n"}) == "s: |\n  a\n\n  b\n"
+      assert emit(%{"s" => "a\n   \nb\n"}) == "s: |\n  a\n     \n  b\n"
+      assert emit(%{"s" => "# not a comment\n- x\n"}) == "s: |\n  # not a comment\n  - x\n"
+    end
+
+    test "in list items and nested maps" do
+      assert emit(["a\nb\n"]) == "- |\n  a\n  b\n"
+
+      assert emit(%{"jobs" => [%{"run" => "one\ntwo\n"}]}) ==
+               "jobs:\n  - run: |\n      one\n      two\n"
+    end
+
+    test "falls back to quotes when a block can't hold the text" do
+      for {string, quoted} <- [
+            {" a\nb\n", ~S(" a\nb\n")},
+            {"\n x\ny", ~S("\n x\ny")},
+            {"\n\n  a\nb", ~S("\n\n  a\nb")},
+            {"\ta\nb", ~S("\ta\nb")},
+            {"\n\ta\nb", ~S("\n\ta\nb")},
+            {"abc\n", ~S("abc\n")},
+            {"a\r\nb\n", ~S("a\r\nb\n")},
+            {"a\nb\u2028c\n", ~S("a\nb\Lc\n")},
+            {"a\nb\u0085c", ~S("a\nb\Nc")},
+            {"a\nb\uFEFF", ~S("a\nb\uFEFF")},
+            {"a\rb\nc", ~S("a\rb\nc")},
+            {"\n\n", ~S("\n\n")}
+          ] do
+        assert emit(%{"s" => string}) == "s: " <> quoted <> "\n"
+      end
+    end
+
+    test "decoded blocks are written back" do
+      for yaml <- ["s: |\n  a\n  b\n", "- |-\n  a\n  b\n- x\n", "a:\n  b: |+\n    x\n    y\n\n"] do
+        assert emit_decoded(yaml) == yaml
+      end
+    end
+
+    test "a tab after the first line stays in the block" do
+      assert emit(%{"s" => "a\n\tb\n"}) == "s: |\n  a\n  \tb\n"
+    end
+
+    test "multi-line keys stay quoted" do
+      assert emit(%{"a\nb" => 1}) == ~S("a\nb": 1) <> "\n"
+    end
+
+    test "top-level multi-line strings stay quoted" do
+      assert emit("a\nb\n") == ~S("a\nb\n")
+    end
+
+    test "invalid UTF-8 returns an error with its location" do
+      assert {:error, %EncodeError{cause: :invalid_utf8, location: ["s"]}} =
+               Encode.data(%{"s" => <<"a\nb", 255>>})
+    end
+
+    test "decode back unchanged in both schemas" do
+      strings = [
+        "a\nb\n",
+        "a\nb",
+        "a\nb\n\n\n",
+        "a\n\nb\n",
+        "a\n   \nb\n",
+        "a  \nb\n",
+        "# c\n- x\nk: v\n---\n",
+        "a\tb\n\tc\n",
+        "\nabc\n",
+        "a\n  ",
+        " a\nb\n",
+        "\n x\ny",
+        "\n\n  a\nb",
+        "a\r\nb\n",
+        "\n\n",
+        "a\rb\nc",
+        "\tx\ny\n",
+        "a\n\t\n",
+        "é\n日本\n"
+      ]
+
+      for string <- strings,
+          value <- [
+            %{"s" => string},
+            [string],
+            %{"a" => [%{"s" => string}]},
+            %{"s" => string, "t" => 1},
+            [string, 1]
+          ],
+          schema <- [:core, :yaml11] do
+        assert decode(emit(value), schema) == {:ok, value}
+      end
+    end
+  end
 end
