@@ -1,7 +1,7 @@
 defmodule YAML.Emitter do
   @moduledoc false
 
-  alias YAML.AST.{Scalar, List, Mapping}
+  alias YAML.AST.{Document, Scalar, List, Mapping}
   alias YAML.EncodeError
 
   @indent_width 2
@@ -18,9 +18,16 @@ defmodule YAML.Emitter do
   defguardp is_escaped_char(c)
             when c in 0x80..0x9F or c in [0x2028, 0x2029, 0xFEFF, 0xFFFE, 0xFFFF]
 
-  @spec emit(%Scalar{} | %List{} | %Mapping{}) :: {:ok, iodata()} | {:error, EncodeError.t()}
-  def emit(node) do
-    {:ok, emit_node(node, 0)}
+  @spec document(%Document{}) :: {:ok, iodata()} | {:error, EncodeError.t()}
+  def document(%Document{} = document) do
+    {:ok, emit_document(document)}
+  catch
+    {:encode_error, %EncodeError{} = error} -> {:error, error}
+  end
+
+  @spec documents([%Document{}]) :: {:ok, iodata()} | {:error, EncodeError.t()}
+  def documents(documents) when is_list(documents) do
+    {:ok, Enum.map(documents, &emit_document/1)}
   catch
     {:encode_error, %EncodeError{} = error} -> {:error, error}
   end
@@ -28,10 +35,16 @@ defmodule YAML.Emitter do
   # Walkers
   # -------
 
+  defp emit_document(%Document{root: root}), do: ["---\n", emit_root(root)]
+
+  # The root ends with a newline, so the next "---" starts a new line
+  defp emit_root(%Scalar{} = node), do: emit_scalar_value(node, 1)
+  defp emit_root(%Mapping{pairs: []}), do: "{}\n"
+  defp emit_root(%List{items: []}), do: "[]\n"
+  defp emit_root(node), do: emit_node(node, 0)
+
   defp emit_node(%Scalar{value: value}, _level), do: write_scalar(value)
-  defp emit_node(%Mapping{pairs: []}, _level), do: "{}"
   defp emit_node(%Mapping{pairs: pairs}, level), do: emit_pairs(pairs, level, indent(level))
-  defp emit_node(%List{items: []}, _level), do: "[]"
   defp emit_node(%List{items: items}, level), do: emit_items(items, level, indent(level))
 
   defp emit_node(node, _level),

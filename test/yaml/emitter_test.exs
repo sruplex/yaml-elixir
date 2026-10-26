@@ -4,21 +4,33 @@ defmodule YAML.EmitterTest do
   alias YAML.{Builder, Emitter, EncodeError}
   alias YAML.AST.{Document, Scalar, List, Mapping, Meta}
 
+  # Emits a whole document and returns its body, without the leading "---\n"
   defp emit(term) do
-    assert {:ok, %Document{root: root}} = Builder.build(term)
-    emit_node(root)
+    assert {:ok, document} = Builder.build(term)
+    emit_document(document)
   end
 
-  defp emit_node(node) do
-    assert {:ok, iodata} = Emitter.emit(node)
-    IO.iodata_to_binary(iodata)
+  defp emit_document(document) do
+    assert {:ok, iodata} = Emitter.document(document)
+    assert "---\n" <> body = IO.iodata_to_binary(iodata)
+    body
   end
 
   defp emit_decoded(yaml) do
-    assert {:ok, %Document{root: root}} =
+    assert {:ok, %Document{} = document} =
              YAML.decode(yaml, detailed: true, return: :first_document)
 
-    emit_node(root)
+    emit_document(document)
+  end
+
+  defp output(%Document{} = document) do
+    assert {:ok, iodata} = Emitter.document(document)
+    IO.iodata_to_binary(iodata)
+  end
+
+  defp output(documents) when is_list(documents) do
+    assert {:ok, iodata} = Emitter.documents(documents)
+    IO.iodata_to_binary(iodata)
   end
 
   defp decode(yaml, schema) do
@@ -38,7 +50,7 @@ defmodule YAML.EmitterTest do
             {1.0e-5, "1.0e-5"},
             {123_456_789_012_345_678_901_234_567_890, "123456789012345678901234567890"}
           ] do
-        assert emit(term) == yaml
+        assert emit(term) == yaml <> "\n"
       end
     end
 
@@ -68,29 +80,31 @@ defmodule YAML.EmitterTest do
 
     test "infinity and NaN from decoded YAML" do
       for yaml <- [".inf", "-.inf", ".nan"] do
-        assert emit_decoded(yaml) == yaml
+        assert emit_decoded(yaml) == yaml <> "\n"
       end
     end
 
     test "tags outside the core set are written by their Elixir type" do
-      assert emit_decoded("!!binary aGVsbG8=") == "hello"
+      assert emit_decoded("!!binary aGVsbG8=") == "hello\n"
     end
 
     test "unsupported scalar values return an error" do
       node = %Scalar{value: {1, 2}, meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str"}}
-      assert {:error, %EncodeError{cause: :unsupported_type, term: {1, 2}}} = Emitter.emit(node)
+
+      assert {:error, %EncodeError{cause: :unsupported_type, term: {1, 2}}} =
+               Emitter.document(%Document{root: node})
     end
 
     test "scalars without meta are written by their Elixir type" do
-      assert {:ok, "1"} = Emitter.emit(%Scalar{value: 1, meta: nil})
-      assert {:ok, ".inf"} = Emitter.emit(%Scalar{value: :"+inf", meta: nil})
+      assert output(%Document{root: %Scalar{value: 1, meta: nil}}) == "---\n1\n"
+      assert output(%Document{root: %Scalar{value: :"+inf", meta: nil}}) == "---\n.inf\n"
     end
   end
 
   describe "strings" do
     test "safe strings are written plain" do
       for string <- ["hello", "hello world", "a:b", "a#b", "tRuE", "quote\"in", "日本語"] do
-        assert emit(string) == string
+        assert emit(string) == string <> "\n"
       end
     end
 
@@ -121,13 +135,13 @@ defmodule YAML.EmitterTest do
             " x",
             "x "
           ] do
-        assert emit(string) == ~s("#{string}")
+        assert emit(string) == ~s("#{string}"\n)
       end
     end
 
     test "special characters are escaped" do
       for {string, yaml} <- [
-            {"a\nb", ~S("a\nb")},
+            {"abc\n", ~S("abc\n")},
             {"a\tb", ~S("a\tb")},
             {"a\r\nb", ~S("a\r\nb")},
             {"back\\slash\n", ~S("back\\slash\n")},
@@ -143,20 +157,20 @@ defmodule YAML.EmitterTest do
             {"\uFEFFbom", ~S("\uFEFFbom")},
             {"\uFFFE", ~S("\uFFFE")}
           ] do
-        assert emit(string) == yaml
+        assert emit(string) == yaml <> "\n"
       end
     end
 
     test "atoms are written as strings" do
-      assert emit(:ok) == "ok"
-      assert emit(:yes) == ~s("yes")
+      assert emit(:ok) == "ok\n"
+      assert emit(:yes) == ~s("yes"\n)
     end
 
     test "invalid UTF-8 returns an error" do
       node = %Scalar{value: <<255, 104>>, meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str"}}
 
       assert {:error, %EncodeError{cause: :invalid_utf8, term: <<255, 104>>}} =
-               Emitter.emit(node)
+               Emitter.document(%Document{root: node})
     end
 
     test "every string reads back unchanged in both schemas" do
@@ -233,7 +247,7 @@ defmodule YAML.EmitterTest do
 
     test "empty values and empty top-level map" do
       assert emit(%{"a" => %{}, "b" => []}) == "a: {}\nb: []\n"
-      assert emit(%{}) == "{}"
+      assert emit(%{}) == "{}\n"
     end
 
     test "keys use the string rules" do
@@ -258,7 +272,7 @@ defmodule YAML.EmitterTest do
             {%{"a" => %{<<255>> => 1}}, ["a"]}
           ] do
         assert {:ok, document} = Builder.build(value)
-        assert {:error, %EncodeError{location: ^location} = error} = Emitter.emit(document.root)
+        assert {:error, %EncodeError{location: ^location} = error} = Emitter.document(document)
 
         assert Exception.message(error) ==
                  "cannot encode invalid UTF-8 string (at #{inspect(location)})"
@@ -267,7 +281,7 @@ defmodule YAML.EmitterTest do
 
     test "a top-level error has no location" do
       assert {:ok, document} = Builder.build(<<255>>)
-      assert {:error, %EncodeError{location: []}} = Emitter.emit(document.root)
+      assert {:error, %EncodeError{location: []}} = Emitter.document(document)
     end
 
     test "a non-scalar key in an AST returns an error" do
@@ -277,7 +291,7 @@ defmodule YAML.EmitterTest do
 
       assert {:error,
               %EncodeError{cause: :invalid_key, message: "cannot encode list as a map key"}} =
-               Emitter.emit(node)
+               Emitter.document(%Document{root: node})
     end
 
     test "map keys, invalid keys and invalid values in an AST return errors" do
@@ -289,14 +303,16 @@ defmodule YAML.EmitterTest do
             {:junk, "cannot encode invalid AST node as a map key"}
           ] do
         node = %Mapping{pairs: [{key, value}], meta: %Meta{tag: "tag:yaml.org,2002:map"}}
-        assert {:error, %EncodeError{cause: :invalid_key, message: ^message}} = Emitter.emit(node)
+
+        assert {:error, %EncodeError{cause: :invalid_key, message: ^message}} =
+                 Emitter.document(%Document{root: node})
       end
 
       key = %Scalar{value: "a", meta: %Meta{tag: "tag:yaml.org,2002:str"}}
       node = %Mapping{pairs: [{key, :junk}], meta: %Meta{tag: "tag:yaml.org,2002:map"}}
 
       assert {:error, %EncodeError{message: "cannot encode invalid AST node", location: ["a"]}} =
-               Emitter.emit(node)
+               Emitter.document(%Document{root: node})
     end
   end
 
@@ -309,7 +325,7 @@ defmodule YAML.EmitterTest do
 
     test "empty items and empty top-level list" do
       assert emit([%{}, []]) == "- {}\n- []\n"
-      assert emit([]) == "[]"
+      assert emit([]) == "[]\n"
     end
 
     test "a list under a key is indented" do
@@ -403,15 +419,11 @@ defmodule YAML.EmitterTest do
       assert emit(%{"a\nb" => 1}) == ~S("a\nb": 1) <> "\n"
     end
 
-    test "top-level multi-line strings stay quoted" do
-      assert emit("a\nb\n") == ~S("a\nb\n")
-    end
-
     test "invalid UTF-8 returns an error with its location" do
       assert {:ok, document} = Builder.build(%{"s" => <<"a\nb", 255>>})
 
       assert {:error, %EncodeError{cause: :invalid_utf8, location: ["s"]}} =
-               Emitter.emit(document.root)
+               Emitter.document(document)
     end
 
     test "decode back unchanged in both schemas" do
@@ -448,6 +460,95 @@ defmodule YAML.EmitterTest do
           schema <- [:core, :yaml11] do
         assert decode(emit(value), schema) == {:ok, value}
       end
+    end
+  end
+
+  describe "documents" do
+    test "every document starts with --- and ends with one newline" do
+      for {term, yaml} <- [
+            {%{"a" => 1}, "---\na: 1\n"},
+            {42, "---\n42\n"},
+            {"yes", ~s(---\n"yes"\n)},
+            {%{}, "---\n{}\n"},
+            {[], "---\n[]\n"},
+            {nil, "---\nnull\n"},
+            {[1, %{"b" => 2}], "---\n- 1\n- b: 2\n"}
+          ] do
+        assert {:ok, document} = Builder.build(term)
+        assert output(document) == yaml
+      end
+    end
+
+    test "a top-level multi-line string is a block" do
+      assert {:ok, document} = Builder.build("a\nb\n")
+      assert output(document) == "---\n|\n  a\n  b\n"
+    end
+
+    test "a list of documents is written back to back" do
+      documents =
+        for term <- [%{"a" => 1}, 42, "x\ny\n"] do
+          assert {:ok, document} = Builder.build(term)
+          document
+        end
+
+      yaml = output(documents)
+      assert yaml == "---\na: 1\n---\n42\n---\n|\n  x\n  y\n"
+      assert YAML.decode(yaml, return: :all_documents) == {:ok, [%{"a" => 1}, 42, "x\ny\n"]}
+    end
+
+    test "no documents" do
+      assert output([]) == ""
+    end
+
+    test "top-level blocks keep their trailing newlines" do
+      for {string, yaml} <- [
+            {"a\nb", "---\n|-\n  a\n  b\n"},
+            {"a\nb\n", "---\n|\n  a\n  b\n"},
+            {"a\nb\n\n", "---\n|+\n  a\n  b\n\n"}
+          ] do
+        assert {:ok, document} = Builder.build(string)
+        assert output(document) == yaml
+
+        for schema <- [:core, :yaml11] do
+          assert decode(yaml, schema) == {:ok, string}
+        end
+      end
+    end
+
+    test "a |+ block followed by another document" do
+      documents =
+        for term <- ["a\nb\n\n", 1] do
+          assert {:ok, document} = Builder.build(term)
+          document
+        end
+
+      yaml = output(documents)
+      assert yaml == "---\n|+\n  a\n  b\n\n---\n1\n"
+      assert YAML.decode(yaml, return: :all_documents) == {:ok, ["a\nb\n\n", 1]}
+    end
+
+    test "detailed decode of several documents round-trips" do
+      yaml = "---\na: [1, 2]\n---\nx\n---\n|\n  a\n  b\n---\n{}\n"
+      assert {:ok, documents} = YAML.decode(yaml, detailed: true, return: :all_documents)
+
+      assert YAML.decode(output(documents), return: :all_documents) ==
+               YAML.decode(yaml, return: :all_documents)
+    end
+
+    test "a nil root is an error" do
+      assert {:error, %EncodeError{message: "cannot encode invalid AST node", location: []}} =
+               Emitter.document(%Document{root: nil})
+    end
+
+    test "an error in a later document has no document index" do
+      documents =
+        for term <- [1, <<255>>] do
+          assert {:ok, document} = Builder.build(term)
+          document
+        end
+
+      assert {:error, %EncodeError{cause: :invalid_utf8, location: []}} =
+               Emitter.documents(documents)
     end
   end
 end
