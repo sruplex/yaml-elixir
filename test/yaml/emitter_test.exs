@@ -540,14 +540,14 @@ defmodule YAML.EmitterTest do
                Emitter.document(%Document{root: nil})
     end
 
-    test "an error in a later document has no document index" do
+    test "an error in a later document starts with its index" do
       documents =
         for term <- [1, <<255>>] do
           assert {:ok, document} = Builder.build(term)
           document
         end
 
-      assert {:error, %EncodeError{cause: :invalid_utf8, location: []}} =
+      assert {:error, %EncodeError{cause: :invalid_utf8, location: [1]}} =
                Emitter.documents(documents)
     end
   end
