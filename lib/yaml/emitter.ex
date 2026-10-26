@@ -86,18 +86,25 @@ defmodule YAML.Emitter do
   end
 
   # Scalars and empty collections stay on the key's line, others start on the next
-  defp emit_value(%Scalar{} = node, _level), do: [?\s, emit_node(node, 0), ?\n]
+  defp emit_value(%Scalar{} = node, level), do: [?\s, emit_scalar_value(node, level)]
   defp emit_value(%Mapping{pairs: []}, _level), do: " {}\n"
   defp emit_value(%List{items: []}, _level), do: " []\n"
   defp emit_value(node, level), do: [?\n, emit_node(node, level)]
 
   # Everything after "- " starts on the same line
-  defp emit_item_value(%Scalar{} = node, _level), do: [emit_node(node, 0), ?\n]
+  defp emit_item_value(%Scalar{} = node, level), do: emit_scalar_value(node, level)
   defp emit_item_value(%Mapping{pairs: []}, _level), do: "{}\n"
   defp emit_item_value(%List{items: []}, _level), do: "[]\n"
   defp emit_item_value(%Mapping{pairs: pairs}, level), do: emit_pairs(pairs, level, "")
   defp emit_item_value(%List{items: items}, level), do: emit_items(items, level, "")
   defp emit_item_value(node, level), do: emit_node(node, level)
+
+  # Multi-line strings become block scalars; everything else stays on one line
+  defp emit_scalar_value(%Scalar{value: value} = node, level) do
+    if is_binary(value) and block?(value),
+      do: write_block(value, level),
+      else: [emit_node(node, 0), ?\n]
+  end
 
   # Writers
   # -------
@@ -204,6 +211,57 @@ defmodule YAML.Emitter do
   defp utf8_size(c) when c < 0x800, do: 2
   defp utf8_size(c) when c < 0x10000, do: 3
   defp utf8_size(_c), do: 4
+
+  # Block scalars
+  # -------------
+
+  # The newline check is a fast exit for single-line strings
+  defp block?(str) do
+    :binary.match(str, "\n") != :nomatch and not indented_start?(str) and
+      block_safe?(str, false, false)
+  end
+
+  # A block's indentation comes from its first text line, so that line can't start with a space
+  defp indented_start?(<<?\n, rest::binary>>), do: indented_start?(rest)
+  defp indented_start?(<<?\s, _::binary>>), do: true
+  defp indented_start?(_str), do: false
+
+  # One pass: no escaped characters, and some text after a newline
+  defp block_safe?(<<?\n, rest::binary>>, multi, _newline), do: block_safe?(rest, multi, true)
+
+  defp block_safe?(<<?\t, rest::binary>>, multi, newline),
+    do: block_safe?(rest, multi or newline, newline)
+
+  defp block_safe?(<<c, _::binary>>, _multi, _newline) when is_escaped_byte(c), do: false
+
+  defp block_safe?(<<c, rest::binary>>, multi, newline) when c < 0x80,
+    do: block_safe?(rest, multi or newline, newline)
+
+  defp block_safe?(<<c::utf8, _::binary>>, _multi, _newline) when is_escaped_char(c), do: false
+
+  defp block_safe?(<<_::utf8, rest::binary>>, multi, newline),
+    do: block_safe?(rest, multi or newline, newline)
+
+  defp block_safe?(<<>>, multi, _newline), do: multi
+  defp block_safe?(_invalid, _multi, _newline), do: false
+
+  defp write_block(str, level) do
+    body = String.trim_trailing(str, "\n")
+    newlines = byte_size(str) - byte_size(body)
+    lines = :binary.split(body, "\n", [:global])
+
+    [chomp(newlines), ?\n, Enum.map(lines, &block_line(&1, level)), extra_newlines(newlines)]
+  end
+
+  defp chomp(0), do: "|-"
+  defp chomp(1), do: "|"
+  defp chomp(_newlines), do: "|+"
+
+  defp block_line("", _level), do: ?\n
+  defp block_line(line, level), do: [indent(level), line, ?\n]
+
+  defp extra_newlines(newlines) when newlines > 1, do: :binary.copy("\n", newlines - 1)
+  defp extra_newlines(_newlines), do: []
 
   # Indentation
   # -----------
