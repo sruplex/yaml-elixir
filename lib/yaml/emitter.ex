@@ -1,8 +1,10 @@
 defmodule YAML.Emitter do
   @moduledoc false
 
-  alias YAML.AST.Scalar
+  alias YAML.AST.{Scalar, List, Mapping}
   alias YAML.EncodeError
+
+  @indent_width 2
 
   # Plain strings YAML would read as another type, or as a merge or value key
   @reserved ~w(
@@ -16,9 +18,9 @@ defmodule YAML.Emitter do
   defguardp is_escaped_char(c)
             when c in 0x80..0x9F or c in [0x2028, 0x2029, 0xFEFF, 0xFFFE, 0xFFFF]
 
-  @spec emit(%Scalar{}) :: {:ok, iodata()} | {:error, EncodeError.t()}
+  @spec emit(%Scalar{} | %List{} | %Mapping{}) :: {:ok, iodata()} | {:error, EncodeError.t()}
   def emit(node) do
-    {:ok, emit_node(node)}
+    {:ok, emit_node(node, 0)}
   catch
     {:encode_error, %EncodeError{} = error} -> {:error, error}
   end
@@ -26,7 +28,76 @@ defmodule YAML.Emitter do
   # Walkers
   # -------
 
-  defp emit_node(%Scalar{value: value}), do: write_scalar(value)
+  defp emit_node(%Scalar{value: value}, _level), do: write_scalar(value)
+  defp emit_node(%Mapping{pairs: []}, _level), do: "{}"
+  defp emit_node(%Mapping{pairs: pairs}, level), do: emit_pairs(pairs, level, indent(level))
+  defp emit_node(%List{items: []}, _level), do: "[]"
+  defp emit_node(%List{items: items}, level), do: emit_items(items, level, indent(level))
+
+  defp emit_node(node, _level),
+    do: throw({:encode_error, EncodeError.unsupported(node, "invalid AST node")})
+
+  # The first line takes `first_indent`, so it can follow "- " on the same line
+  defp emit_pairs([first | rest], level, first_indent) do
+    line_indent = indent(level)
+    [emit_pair(first, level, first_indent) | Enum.map(rest, &emit_pair(&1, level, line_indent))]
+  end
+
+  defp emit_pair({%Scalar{value: step} = key, value}, level, line_indent),
+    do: [line_indent, emit_node(key, 0), ?:, emit_value_at(value, level + 1, step)]
+
+  defp emit_pair({%List{} = key, _value}, _level, _line_indent),
+    do: throw({:encode_error, EncodeError.invalid_key(key, "list")})
+
+  defp emit_pair({%Mapping{} = key, _value}, _level, _line_indent),
+    do: throw({:encode_error, EncodeError.invalid_key(key, "map")})
+
+  defp emit_pair({key, _value}, _level, _line_indent),
+    do: throw({:encode_error, EncodeError.invalid_key(key, "invalid AST node")})
+
+  defp emit_items([first | rest], level, first_indent) do
+    line_indent = indent(level)
+    [emit_item(first, level, first_indent, 0) | emit_next_items(rest, level, line_indent, 1)]
+  end
+
+  defp emit_next_items([item | rest], level, line_indent, index) do
+    [
+      emit_item(item, level, line_indent, index)
+      | emit_next_items(rest, level, line_indent, index + 1)
+    ]
+  end
+
+  defp emit_next_items([], _level, _line_indent, _index), do: []
+
+  defp emit_item(item, level, line_indent, index),
+    do: [line_indent, "- ", emit_item_value_at(item, level + 1, index)]
+
+  # Add the map key or list index to the location of an error from inside the value
+  defp emit_value_at(value, level, step) do
+    emit_value(value, level)
+  catch
+    {:encode_error, error} -> throw({:encode_error, EncodeError.prepend_location(error, step)})
+  end
+
+  defp emit_item_value_at(item, level, index) do
+    emit_item_value(item, level)
+  catch
+    {:encode_error, error} -> throw({:encode_error, EncodeError.prepend_location(error, index)})
+  end
+
+  # Scalars and empty collections stay on the key's line, others start on the next
+  defp emit_value(%Scalar{} = node, _level), do: [?\s, emit_node(node, 0), ?\n]
+  defp emit_value(%Mapping{pairs: []}, _level), do: " {}\n"
+  defp emit_value(%List{items: []}, _level), do: " []\n"
+  defp emit_value(node, level), do: [?\n, emit_node(node, level)]
+
+  # Everything after "- " starts on the same line
+  defp emit_item_value(%Scalar{} = node, _level), do: [emit_node(node, 0), ?\n]
+  defp emit_item_value(%Mapping{pairs: []}, _level), do: "{}\n"
+  defp emit_item_value(%List{items: []}, _level), do: "[]\n"
+  defp emit_item_value(%Mapping{pairs: pairs}, level), do: emit_pairs(pairs, level, "")
+  defp emit_item_value(%List{items: items}, level), do: emit_items(items, level, "")
+  defp emit_item_value(node, level), do: emit_node(node, level)
 
   # Writers
   # -------
@@ -133,4 +204,13 @@ defmodule YAML.Emitter do
   defp utf8_size(c) when c < 0x800, do: 2
   defp utf8_size(c) when c < 0x10000, do: 3
   defp utf8_size(_c), do: 4
+
+  # Indentation
+  # -----------
+
+  for level <- 0..32 do
+    defp indent(unquote(level)), do: unquote(String.duplicate(" ", level * @indent_width))
+  end
+
+  defp indent(level), do: :binary.copy(" ", level * @indent_width)
 end
