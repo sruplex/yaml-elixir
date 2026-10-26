@@ -32,6 +32,9 @@ defmodule YAML.Parser do
     node_mods = {:node_mods, node_mods ++ [YAML.MergeKey]}
     opts = [:str_node_as_binary, :detailed_constr, node_mods | yamerl_opts]
 
+    # yamerl reads its app env on every parse, so it must be loaded
+    if Application.get_env(:yamerl, :node_mods) == nil, do: Application.load(:yamerl)
+
     try do
       :yamerl_constr.string(string, opts)
     rescue

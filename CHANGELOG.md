@@ -23,6 +23,7 @@
 - Unknown option errors name the option.
 - Only a plain `<<` key or a `!!merge` key is merged; a quoted or `!!str` `<<` stays a key.
 - Input that crashes yamerl's parser returns an error instead of raising.
+- Decoding works when yamerl is not loaded, e.g. in scripts run without Mix.
 
 ## v0.2.0 (2026-08-30)
 
