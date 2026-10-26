@@ -4,7 +4,10 @@ defmodule YAML do
   """
   alias YAML.Parser
   alias YAML.Merge
+  alias YAML.Encode
   alias YAML.ArgumentError
+  alias YAML.EncodeError
+  alias YAML.AST.Document
 
   @valid_yamerl_opts [
     :schema,
@@ -82,6 +85,119 @@ defmodule YAML do
       {:error, error} -> raise error
     end
   end
+
+  @doc """
+  Encodes Elixir data, a YAML AST document or a list of documents into YAML.
+
+  ## Options
+
+    * `:sort_maps` - writes map keys in sorted order instead of the map's own order (default: `false`)
+
+  ## Types
+
+    * Atoms are written as strings, except `nil`, `true`, `false`, `:nan`, `:"+inf"` and `:"-inf"`
+    * `:nan`, `:"+inf"` and `:"-inf"` are written as `.nan`, `.inf` and `-.inf`
+    * Dates and times are written as quoted ISO 8601 strings
+    * Other structs return an error
+    * An atom key and a string key with the same text return an error
+    * Without `:sort_maps`, map keys follow Elixir's map order, which isn't alphabetical for atom keys
+
+  ## Examples
+
+      iex> YAML.encode(%{"a" => 1})
+      {:ok, "---\\na: 1\\n"}
+
+      iex> YAML.encode(%{c: 1, a: 2}, sort_maps: true)
+      {:ok, "---\\na: 2\\nc: 1\\n"}
+
+      iex> {:error, error} = YAML.encode({1, 2})
+      iex> error.message
+      "cannot encode tuple"
+
+  """
+  @spec encode(term(), keyword()) ::
+          {:ok, binary()} | {:error, EncodeError.t() | ArgumentError.t()}
+  def encode(term, opts \\ []) when is_list(opts) do
+    with {:ok, iodata} <- encode_to_iodata(term, opts) do
+      {:ok, IO.iodata_to_binary(iodata)}
+    end
+  end
+
+  @doc """
+  Same as `encode/2`, but raises on error.
+
+  ## Examples
+
+      iex> YAML.encode!([1, 2])
+      "---\\n- 1\\n- 2\\n"
+
+  """
+  @spec encode!(term(), keyword()) :: binary()
+  def encode!(term, opts \\ []) when is_list(opts) do
+    case encode(term, opts) do
+      {:ok, yaml} -> yaml
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Same as `encode/2`, but returns iodata, which is faster to write to a file or socket.
+
+  ## Examples
+
+      iex> {:ok, iodata} = YAML.encode_to_iodata(%{"a" => 1})
+      iex> IO.iodata_to_binary(iodata)
+      "---\\na: 1\\n"
+
+  """
+  @spec encode_to_iodata(term(), keyword()) ::
+          {:ok, iodata()} | {:error, EncodeError.t() | ArgumentError.t()}
+  def encode_to_iodata(term, opts \\ []) when is_list(opts) do
+    with {:ok, sort} <- validate_encode_opts(opts, false) do
+      # A list starting with a document is written as one document each
+      case term do
+        %Document{} ->
+          Encode.document(term)
+
+        [%Document{} | _] ->
+          Encode.documents(term)
+
+        _ ->
+          Encode.data(term, sort)
+      end
+    end
+  end
+
+  @doc """
+  Same as `encode_to_iodata/2`, but raises on error.
+
+  ## Examples
+
+      File.write!("config.yml", YAML.encode_to_iodata!(data))
+
+  """
+  @spec encode_to_iodata!(term(), keyword()) :: iodata()
+  def encode_to_iodata!(term, opts \\ []) when is_list(opts) do
+    case encode_to_iodata(term, opts) do
+      {:ok, iodata} -> iodata
+      {:error, error} -> raise error
+    end
+  end
+
+  # Returns the :sort_maps value, the only encode option
+  defp validate_encode_opts([], sort), do: {:ok, sort}
+
+  defp validate_encode_opts([{:sort_maps, v} | rest], _sort) when is_boolean(v),
+    do: validate_encode_opts(rest, v)
+
+  defp validate_encode_opts([{:sort_maps, v} | _], _sort),
+    do: {:error, ArgumentError.invalid_option(:sort_maps, v, "must be a boolean")}
+
+  defp validate_encode_opts([{key, value} | _], _sort) when is_atom(key),
+    do: {:error, ArgumentError.invalid_option(key, value, "unknown option #{inspect(key)}")}
+
+  defp validate_encode_opts([opt | _], _sort),
+    do: {:error, ArgumentError.invalid_option(nil, opt, "expected a keyword list")}
 
   @default_opts [
     return: :auto,
