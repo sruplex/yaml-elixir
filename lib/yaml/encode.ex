@@ -29,14 +29,14 @@ defmodule YAML.Encode do
   defguardp is_escaped_char(c)
             when c in 0x80..0x9F or c in [0x2028, 0x2029, 0xFEFF, 0xFFFE, 0xFFFF]
 
-  @spec data(term()) :: {:ok, iodata()} | {:error, EncodeError.t()}
-  def data(term) do
+  @spec data(term(), boolean()) :: {:ok, iodata()} | {:error, EncodeError.t()}
+  def data(term, sort \\ false) do
     root =
       case term do
         map when map == %{} -> "{}\n"
         [] -> "[]\n"
-        map when is_plain_map(map) -> data_pairs(map, 0, "")
-        list when is_list(list) -> data_items(list, 0, "")
+        map when is_plain_map(map) -> data_pairs(map, 0, "", sort)
+        list when is_list(list) -> data_items(list, 0, "", sort)
         value -> write_value(value, 1)
       end
 
@@ -66,25 +66,25 @@ defmodule YAML.Encode do
   # ----------
 
   # The first line takes `first_indent`, so it can follow "- " on the same line
-  defp data_pairs(map, level, first_indent) do
-    [first | rest] = Map.to_list(map)
+  defp data_pairs(map, level, first_indent, sort) do
+    [first | rest] = map_pairs(map, sort)
 
     # Built only when a second line needs it, so deep single-item nesting stays cheap
     line_indent = if rest == [], do: "", else: indent(level)
 
     [
-      data_pair(first, map, level, first_indent)
-      | Enum.map(rest, &data_pair(&1, map, level, line_indent))
+      data_pair(first, map, level, first_indent, sort)
+      | Enum.map(rest, &data_pair(&1, map, level, line_indent, sort))
     ]
   end
 
   # Adds the map key to the location of an error from inside the value
-  defp data_pair({key, value}, map, level, line_indent) when is_scalar_key(key) do
+  defp data_pair({key, value}, map, level, line_indent, sort) when is_scalar_key(key) do
     written_key = write_scalar(key_text(key, map))
 
     written =
       try do
-        data_value(value, level + 1)
+        data_value(value, level + 1, sort)
       catch
         {:encode_error, error} ->
           fail(EncodeError.prepend_location(error, key))
@@ -94,17 +94,20 @@ defmodule YAML.Encode do
   end
 
   # Map and list keys use the explicit "? key" form, with the value on the ":" line
-  defp data_pair({key, value}, _map, level, line_indent) when is_plain_map(key) or is_list(key) do
+  defp data_pair({key, value}, _map, level, line_indent, sort)
+       when is_plain_map(key) or is_list(key) do
     written_key =
-      if starts_explicit?(key), do: [flow(key), ?\n], else: data_item_value(key, level + 1)
+      if starts_explicit?(key, sort),
+        do: [flow(key, sort), ?\n],
+        else: data_item_value(key, level + 1, sort)
 
-    [line_indent, "? ", written_key, indent(level), ?: | data_value(value, level + 1)]
+    [line_indent, "? ", written_key, indent(level), ?: | data_value(value, level + 1, sort)]
   catch
     {:encode_error, error} ->
       fail(EncodeError.prepend_location(error, key))
   end
 
-  defp data_pair({key, _value}, _map, _level, _line_indent),
+  defp data_pair({key, _value}, _map, _level, _line_indent, _sort),
     do: fail(EncodeError.invalid_key(key, type_name(key)))
 
   # A key written as text would repeat a string key with the same text
@@ -115,53 +118,68 @@ defmodule YAML.Encode do
   end
 
   # yamerl reads a map key that starts with another "? key" as null, so it's written in flow style
-  defp starts_explicit?(map) when is_plain_map(map) and map != %{} do
-    [{key, _value} | _] = Map.to_list(map)
+  defp starts_explicit?(map, sort) when is_plain_map(map) and map != %{} do
+    [{key, _value} | _] = map_pairs(map, sort)
     is_plain_map(key) or is_list(key)
   end
 
-  defp starts_explicit?(_key), do: false
+  defp starts_explicit?(_key, _sort), do: false
 
-  defp data_items([first | rest], level, first_indent) do
+  # A map's pairs in the order they're written
+  defp map_pairs(map, false), do: Map.to_list(map)
+
+  defp map_pairs(map, true),
+    do: map |> Map.to_list() |> Enum.sort_by(fn {key, _value} -> as_text(key) end)
+
+  defp data_items([first | rest], level, first_indent, sort) do
     line_indent = if rest == [], do: "", else: indent(level)
-    [data_item(first, level, first_indent, 0) | data_next_items(rest, level, line_indent, 1)]
-  end
 
-  defp data_next_items([item | rest], level, line_indent, index) do
     [
-      data_item(item, level, line_indent, index)
-      | data_next_items(rest, level, line_indent, index + 1)
+      data_item(first, level, first_indent, 0, sort)
+      | data_next_items(rest, level, line_indent, 1, sort)
     ]
   end
 
-  defp data_next_items([], _level, _line_indent, _index), do: []
+  defp data_next_items([item | rest], level, line_indent, index, sort) do
+    [
+      data_item(item, level, line_indent, index, sort)
+      | data_next_items(rest, level, line_indent, index + 1, sort)
+    ]
+  end
+
+  defp data_next_items([], _level, _line_indent, _index, _sort), do: []
 
   # Adds the list index to the location of an error from inside the item
-  defp data_item(item, level, line_indent, index) do
-    [line_indent, "- " | data_item_value(item, level + 1)]
+  defp data_item(item, level, line_indent, index, sort) do
+    [line_indent, "- " | data_item_value(item, level + 1, sort)]
   catch
     {:encode_error, error} ->
       fail(EncodeError.prepend_location(error, index))
   end
 
   # Scalars and empty collections stay on the key's line, others start on the next
-  defp data_value(map, _level) when map == %{}, do: " {}\n"
-  defp data_value([], _level), do: " []\n"
+  defp data_value(map, _level, _sort) when map == %{}, do: " {}\n"
+  defp data_value([], _level, _sort), do: " []\n"
 
-  defp data_value(map, level) when is_plain_map(map),
-    do: [?\n | data_pairs(map, level, indent(level))]
+  defp data_value(map, level, sort) when is_plain_map(map),
+    do: [?\n | data_pairs(map, level, indent(level), sort)]
 
-  defp data_value(list, level) when is_list(list),
-    do: [?\n | data_items(list, level, indent(level))]
+  defp data_value(list, level, sort) when is_list(list),
+    do: [?\n | data_items(list, level, indent(level), sort)]
 
-  defp data_value(value, level), do: [?\s | write_value(value, level)]
+  defp data_value(value, level, _sort), do: [?\s | write_value(value, level)]
 
   # Everything after "- " starts on the same line
-  defp data_item_value(map, _level) when map == %{}, do: "{}\n"
-  defp data_item_value([], _level), do: "[]\n"
-  defp data_item_value(map, level) when is_plain_map(map), do: data_pairs(map, level, "")
-  defp data_item_value(list, level) when is_list(list), do: data_items(list, level, "")
-  defp data_item_value(value, level), do: write_value(value, level)
+  defp data_item_value(map, _level, _sort) when map == %{}, do: "{}\n"
+  defp data_item_value([], _level, _sort), do: "[]\n"
+
+  defp data_item_value(map, level, sort) when is_plain_map(map),
+    do: data_pairs(map, level, "", sort)
+
+  defp data_item_value(list, level, sort) when is_list(list),
+    do: data_items(list, level, "", sort)
+
+  defp data_item_value(value, level, _sort), do: write_value(value, level)
 
   # YAML AST
   # --------
@@ -216,7 +234,7 @@ defmodule YAML.Encode do
   defp ast_pair({%type{} = key, value}, level, line_indent) when type in [List, Mapping] do
     written_key =
       if ast_starts_explicit?(key),
-        do: [flow(ast_data(key)), ?\n],
+        do: [flow(ast_data(key), false), ?\n],
         else: ast_item_value(key, level + 1)
 
     [line_indent, "? ", written_key, indent(level), ?: | ast_value(value, level + 1)]
@@ -465,27 +483,30 @@ defmodule YAML.Encode do
   # ----------
 
   # Strings are always quoted, since "," "[" "]" "{" "}" mean something in flow style
-  defp flow(map) when map == %{}, do: "{}"
-  defp flow([]), do: "[]"
-  defp flow(map) when is_plain_map(map), do: [?{, flow_pairs(Map.to_list(map), map), ?}]
-  defp flow(list) when is_list(list), do: [?[, flow_items(list, 0), ?]]
+  defp flow(map, _sort) when map == %{}, do: "{}"
+  defp flow([], _sort), do: "[]"
 
-  defp flow(value) do
+  defp flow(map, sort) when is_plain_map(map),
+    do: [?{, flow_pairs(map_pairs(map, sort), map, sort), ?}]
+
+  defp flow(list, sort) when is_list(list), do: [?[, flow_items(list, 0, sort), ?]]
+
+  defp flow(value, _sort) do
     case as_text(value) do
       text when is_binary(text) -> quoted(text)
       other -> write_scalar(other)
     end
   end
 
-  defp flow_pairs([{key, value} | rest], map) do
+  defp flow_pairs([{key, value} | rest], map, sort) do
     written_key =
       cond do
         is_scalar_key(key) ->
-          flow(key_text(key, map))
+          flow(key_text(key, map), sort)
 
         is_plain_map(key) or is_list(key) ->
           try do
-            flow(key)
+            flow(key, sort)
           catch
             {:encode_error, error} -> fail(EncodeError.prepend_location(error, key))
           end
@@ -496,24 +517,24 @@ defmodule YAML.Encode do
 
     written =
       try do
-        flow(value)
+        flow(value, sort)
       catch
         {:encode_error, error} -> fail(EncodeError.prepend_location(error, key))
       end
 
     pair = [written_key, ": ", written]
-    if rest == [], do: [pair], else: [pair, ", " | flow_pairs(rest, map)]
+    if rest == [], do: [pair], else: [pair, ", " | flow_pairs(rest, map, sort)]
   end
 
-  defp flow_items([item | rest], index) do
+  defp flow_items([item | rest], index, sort) do
     written =
       try do
-        flow(item)
+        flow(item, sort)
       catch
         {:encode_error, error} -> fail(EncodeError.prepend_location(error, index))
       end
 
-    if rest == [], do: [written], else: [written, ", " | flow_items(rest, index + 1)]
+    if rest == [], do: [written], else: [written, ", " | flow_items(rest, index + 1, sort)]
   end
 
   # Block scalars
