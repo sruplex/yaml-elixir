@@ -1537,6 +1537,76 @@ defmodule YAMLTest do
     end
   end
 
+  describe "encode_to_stream!/2" do
+    test "encodes each item as one document" do
+      stream = YAML.encode_to_stream!([%{"a" => 1}, [1, 2], "x"])
+
+      assert stream |> Enum.to_list() |> IO.iodata_to_binary() ==
+               "---\na: 1\n---\n- 1\n- 2\n---\nx\n"
+    end
+
+    test "is lazy" do
+      stream = Stream.repeatedly(fn -> %{"a" => 1} end) |> YAML.encode_to_stream!()
+      assert stream |> Enum.take(2) |> IO.iodata_to_binary() == "---\na: 1\n---\na: 1\n"
+    end
+
+    test "an empty enumerable gives no documents" do
+      assert [] |> YAML.encode_to_stream!() |> Enum.to_list() == []
+    end
+
+    test "writes AST documents as they are" do
+      assert {:ok, document} = YAML.decode("a: 1", detailed: true)
+
+      assert [document] |> YAML.encode_to_stream!() |> Enum.to_list() |> IO.iodata_to_binary() ==
+               "---\na: 1\n"
+    end
+
+    test "raises with the item index in the location" do
+      stream = YAML.encode_to_stream!([1, %{"a" => {1, 2}}])
+
+      assert_raise YAML.EncodeError, ~s{cannot encode tuple (at [1, "a"])}, fn ->
+        Stream.run(stream)
+      end
+    end
+
+    test "an error inside a document item starts with its index" do
+      assert {:ok, document} = YAML.decode("a: 1", detailed: true)
+      stream = YAML.encode_to_stream!([1, %{document | root: {:bad}}])
+
+      assert_raise YAML.EncodeError, "cannot encode invalid AST node (at [1])", fn ->
+        Stream.run(stream)
+      end
+    end
+
+    test "a list of documents as one item is not expanded" do
+      assert {:ok, document} = YAML.decode("a: 1", detailed: true)
+      stream = YAML.encode_to_stream!([[document]])
+
+      assert_raise YAML.EncodeError, "cannot encode YAML.AST.Document struct (at [0, 0])", fn ->
+        Stream.run(stream)
+      end
+    end
+
+    test "raises on unknown options before encoding" do
+      assert_raise YAML.ArgumentError, "unknown option :foo", fn ->
+        YAML.encode_to_stream!([1], foo: 1)
+      end
+    end
+
+    @tag :tmp_dir
+    test "streams into a file that decodes back", %{tmp_dir: dir} do
+      path = Path.join(dir, "out.yml")
+      items = [%{"a" => 1}, %{"b" => [2, 3]}]
+
+      items
+      |> YAML.encode_to_stream!()
+      |> Stream.into(File.stream!(path, [:delayed_write]))
+      |> Stream.run()
+
+      assert path |> File.read!() |> YAML.decode(return: :all_documents) == {:ok, items}
+    end
+  end
+
   describe "fixtures round trip" do
     test "decoding, encoding and decoding again gives the same data" do
       for fixture <- [:multi_document_mixed_types, :merge_example] do

@@ -165,6 +165,40 @@ defmodule YAML do
     end
   end
 
+  @doc """
+  Lazily encodes each item of an enumerable as one YAML document, and raises on error.
+
+  ## Examples
+
+      iex> stream = YAML.encode_to_stream!([%{"a" => 1}, [1, 2]])
+      iex> stream |> Enum.to_list() |> IO.iodata_to_binary()
+      "---\\na: 1\\n---\\n- 1\\n- 2\\n"
+
+  To write a file:
+
+      data
+      |> YAML.encode_to_stream!()
+      |> Stream.into(File.stream!("out.yml", [:delayed_write]))
+      |> Stream.run()
+
+  """
+  @spec encode_to_stream!(Enumerable.t(), keyword()) :: Enumerable.t()
+  def encode_to_stream!(enumerable, opts \\ []) when is_list(opts) do
+    with {:error, error} <- validate_encode_opts(opts), do: raise(error)
+
+    enumerable
+    |> Stream.with_index()
+    |> Stream.map(fn {item, index} ->
+      written = if match?(%Document{}, item), do: Encode.document(item), else: Encode.data(item)
+
+      # Adds the item's index to the location of its error
+      case written do
+        {:ok, iodata} -> iodata
+        {:error, error} -> raise EncodeError.prepend_location(error, index)
+      end
+    end)
+  end
+
   # Encode has no options yet
   defp validate_encode_opts([]), do: :ok
 
