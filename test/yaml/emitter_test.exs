@@ -2,7 +2,7 @@ defmodule YAML.EmitterTest do
   use ExUnit.Case, async: true
 
   alias YAML.{Builder, Emitter, EncodeError}
-  alias YAML.AST.{Document, Scalar}
+  alias YAML.AST.{Document, Scalar, List, Mapping, Meta}
 
   defp emit(term) do
     assert {:ok, %Document{root: root}} = Builder.build(term)
@@ -220,6 +220,144 @@ defmodule YAML.EmitterTest do
 
       for string <- strings, schema <- [:core, :yaml11] do
         assert decode(emit(string), schema) == {:ok, string}
+      end
+    end
+  end
+
+  describe "maps" do
+    test "flat and nested maps" do
+      assert emit(%{"a" => 1, "b" => "x"}) == "a: 1\nb: x\n"
+      assert emit(%{"a" => %{"b" => %{"c" => nil}}}) == "a:\n  b:\n    c: null\n"
+      assert emit(%{"a" => %{"b" => 1}, "c" => 2}) == "a:\n  b: 1\nc: 2\n"
+    end
+
+    test "empty values and empty top-level map" do
+      assert emit(%{"a" => %{}, "b" => []}) == "a: {}\nb: []\n"
+      assert emit(%{}) == "{}"
+    end
+
+    test "keys use the string rules" do
+      assert emit(%{"a: b" => 1}) == ~s("a: b": 1\n)
+      assert emit(%{"yes" => 1}) == ~s("yes": 1\n)
+      assert emit(%{1 => "x"}) == "1: x\n"
+      assert emit(%{nil => "x"}) == "null: x\n"
+    end
+
+    test "a \"<<\" key is quoted" do
+      value = %{"<<" => %{"a" => 1}, "b" => 2}
+      assert emit(value) == ~s("<<":\n  a: 1\nb: 2\n)
+
+      assert YAML.decode(emit(value), enable_merge: false, return: :first_document) ==
+               {:ok, value}
+    end
+
+    test "errors from nested values report their location" do
+      for {value, location} <- [
+            {%{"a" => [%{"b" => <<255>>}]}, ["a", 0, "b"]},
+            {%{"files" => [<<1>>, <<0xFF>>]}, ["files", 1]},
+            {%{"a" => %{<<255>> => 1}}, ["a"]}
+          ] do
+        assert {:ok, document} = Builder.build(value)
+        assert {:error, %EncodeError{location: ^location} = error} = Emitter.emit(document.root)
+
+        assert Exception.message(error) ==
+                 "cannot encode invalid UTF-8 string (at #{inspect(location)})"
+      end
+    end
+
+    test "a top-level error has no location" do
+      assert {:ok, document} = Builder.build(<<255>>)
+      assert {:error, %EncodeError{location: []}} = Emitter.emit(document.root)
+    end
+
+    test "a non-scalar key in an AST returns an error" do
+      key = %List{items: [], meta: %Meta{tag: "tag:yaml.org,2002:seq"}, length: 0}
+      value = %Scalar{value: 1, meta: %Meta{tag: "tag:yaml.org,2002:int"}}
+      node = %Mapping{pairs: [{key, value}], meta: %Meta{tag: "tag:yaml.org,2002:map"}}
+
+      assert {:error,
+              %EncodeError{cause: :invalid_key, message: "cannot encode list as a map key"}} =
+               Emitter.emit(node)
+    end
+
+    test "map keys, invalid keys and invalid values in an AST return errors" do
+      value = %Scalar{value: 1, meta: %Meta{tag: "tag:yaml.org,2002:int"}}
+      map_key = %Mapping{pairs: [], meta: %Meta{tag: "tag:yaml.org,2002:map"}}
+
+      for {key, message} <- [
+            {map_key, "cannot encode map as a map key"},
+            {:junk, "cannot encode invalid AST node as a map key"}
+          ] do
+        node = %Mapping{pairs: [{key, value}], meta: %Meta{tag: "tag:yaml.org,2002:map"}}
+        assert {:error, %EncodeError{cause: :invalid_key, message: ^message}} = Emitter.emit(node)
+      end
+
+      key = %Scalar{value: "a", meta: %Meta{tag: "tag:yaml.org,2002:str"}}
+      node = %Mapping{pairs: [{key, :junk}], meta: %Meta{tag: "tag:yaml.org,2002:map"}}
+
+      assert {:error, %EncodeError{message: "cannot encode invalid AST node", location: ["a"]}} =
+               Emitter.emit(node)
+    end
+  end
+
+  describe "lists" do
+    test "flat and nested lists" do
+      assert emit([1, "a"]) == "- 1\n- a\n"
+      assert emit([[1, 2], 3]) == "- - 1\n  - 2\n- 3\n"
+      assert emit([[[[1]]]]) == "- - - - 1\n"
+    end
+
+    test "empty items and empty top-level list" do
+      assert emit([%{}, []]) == "- {}\n- []\n"
+      assert emit([]) == "[]"
+    end
+
+    test "a list under a key is indented" do
+      assert emit(%{"tags" => ["a", "b"]}) == "tags:\n  - a\n  - b\n"
+    end
+
+    test "a map in a list starts on the dash line" do
+      assert emit([%{"name" => "a", "port" => 80}, %{"name" => "b"}]) ==
+               "- name: a\n  port: 80\n- name: b\n"
+    end
+
+    test "mixed nesting" do
+      assert emit(%{"a" => [%{"b" => [1, %{"c" => "x"}]}, ["z"]]}) ==
+               "a:\n  - b:\n      - 1\n      - c: x\n  - - z\n"
+    end
+  end
+
+  describe "indentation" do
+    test "nesting deeper than the precomputed levels" do
+      deep = Enum.reduce(1..40, "leaf", fn i, acc -> %{"k#{i}" => acc} end)
+      lines = deep |> emit() |> String.split("\n", trim: true)
+
+      assert length(lines) == 40
+      assert Enum.at(lines, -1) == String.duplicate("  ", 39) <> "k1: leaf"
+    end
+
+    test "lists nested deeper than the precomputed levels" do
+      deep = Enum.reduce(1..40, 1, fn i, acc -> [%{"k#{i}" => acc, "z" => i}] end)
+
+      for schema <- [:core, :yaml11] do
+        assert decode(emit(deep), schema) == {:ok, deep}
+      end
+    end
+  end
+
+  describe "maps and lists round trip" do
+    test "decode back unchanged in both schemas" do
+      values = [
+        %{"a" => 1, "b" => %{"c" => [1, 2]}},
+        [%{"name" => "a", "ports" => [80, 443]}, [], %{}],
+        %{"servers" => [%{"env" => %{"k" => "v"}, "host" => "x"}], "empty" => [[], [[]]]},
+        %{"a" => [%{"b" => [1, %{"c" => "x"}]}, ["y"]]},
+        %{1 => "a", 1.5 => "b", true => "c", nil => "d"},
+        %{"" => 1, "a: b" => 2, "a:" => 3, "#x" => 4}
+      ]
+
+      for value <- values, schema <- [:core, :yaml11] do
+        assert decode(emit(value), schema) == {:ok, value}
       end
     end
   end
