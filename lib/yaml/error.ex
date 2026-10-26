@@ -49,3 +49,60 @@ defmodule YAML.ArgumentError do
     }
   end
 end
+
+defmodule YAML.EncodeError do
+  @moduledoc """
+  Returned when a value can't be encoded; `:cause` says why and `:location` is the path to it.
+  """
+
+  defexception [:message, :term, :cause, location: []]
+
+  @type t :: %__MODULE__{
+          message: String.t(),
+          term: term(),
+          cause: :unsupported_type | :invalid_key | :invalid_utf8,
+          location: [term()]
+        }
+
+  # Exception Callbacks
+  # -------------------
+
+  def message(%__MODULE__{message: message, location: []}), do: message
+
+  def message(%__MODULE__{message: message, location: location}),
+    do: "#{message} (at #{inspect(location)})"
+
+  # Helper API
+  # ----------
+
+  @doc false
+  def unsupported(term, type) do
+    %__MODULE__{
+      term: term,
+      cause: :unsupported_type,
+      message: "cannot encode #{type}"
+    }
+  end
+
+  @doc false
+  def invalid_key(key, type) do
+    %__MODULE__{
+      term: key,
+      cause: :invalid_key,
+      message: "cannot encode #{type} as a map key"
+    }
+  end
+
+  @doc false
+  def invalid_utf8(string) do
+    %__MODULE__{
+      term: string,
+      cause: :invalid_utf8,
+      message: "cannot encode invalid UTF-8 string"
+    }
+  end
+
+  @doc false
+  def prepend_location(%__MODULE__{location: location} = error, step),
+    do: %{error | location: [step | location]}
+end
