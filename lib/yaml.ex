@@ -4,7 +4,11 @@ defmodule YAML do
   """
   alias YAML.Parser
   alias YAML.Merge
+  alias YAML.Builder
+  alias YAML.Emitter
   alias YAML.ArgumentError
+  alias YAML.EncodeError
+  alias YAML.AST.Document
 
   @valid_yamerl_opts [
     :schema,
@@ -82,6 +86,109 @@ defmodule YAML do
       {:error, error} -> raise error
     end
   end
+
+  @doc """
+  Encodes Elixir data, a YAML AST document or a list of documents into YAML.
+
+  ## Examples
+
+      iex> YAML.encode(%{"a" => 1})
+      {:ok, "---\\na: 1\\n"}
+
+      iex> {:error, error} = YAML.encode({1, 2})
+      iex> error.message
+      "cannot encode tuple"
+
+  """
+  @spec encode(term(), keyword()) ::
+          {:ok, binary()} | {:error, EncodeError.t() | ArgumentError.t()}
+  def encode(term, opts \\ []) when is_list(opts) do
+    with {:ok, iodata} <- encode_to_iodata(term, opts) do
+      {:ok, IO.iodata_to_binary(iodata)}
+    end
+  end
+
+  @doc """
+  Same as `encode/2`, but raises on error.
+
+  ## Examples
+
+      iex> YAML.encode!([1, 2])
+      "---\\n- 1\\n- 2\\n"
+
+  """
+  @spec encode!(term(), keyword()) :: binary()
+  def encode!(term, opts \\ []) when is_list(opts) do
+    case encode(term, opts) do
+      {:ok, yaml} -> yaml
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Same as `encode/2`, but returns iodata, which is faster to write to a file or socket.
+
+  ## Examples
+
+      iex> {:ok, iodata} = YAML.encode_to_iodata(%{"a" => 1})
+      iex> IO.iodata_to_binary(iodata)
+      "---\\na: 1\\n"
+
+  To write a file: `File.write!("config.yml", YAML.encode_to_iodata!(data))`.
+
+  """
+  @spec encode_to_iodata(term(), keyword()) ::
+          {:ok, iodata()} | {:error, EncodeError.t() | ArgumentError.t()}
+  def encode_to_iodata(term, opts \\ []) when is_list(opts) do
+    with :ok <- validate_encode_opts(opts),
+         {:ok, documents} <- to_documents(term) do
+      emit(documents)
+    end
+  end
+
+  @doc """
+  Same as `encode_to_iodata/2`, but raises on error.
+  """
+  @spec encode_to_iodata!(term(), keyword()) :: iodata()
+  def encode_to_iodata!(term, opts \\ []) when is_list(opts) do
+    case encode_to_iodata(term, opts) do
+      {:ok, iodata} -> iodata
+      {:error, error} -> raise error
+    end
+  end
+
+  # Encode has no options yet
+  defp validate_encode_opts([]), do: :ok
+
+  defp validate_encode_opts([{key, value} | _]) when is_atom(key),
+    do: {:error, ArgumentError.invalid_option(key, value, "unknown option #{inspect(key)}")}
+
+  defp validate_encode_opts([opt | _]),
+    do: {:error, ArgumentError.invalid_option(opt, nil, "expected a keyword list")}
+
+  # A non-empty list of documents is written as multiple documents
+  defp to_documents(%Document{} = document), do: {:ok, document}
+
+  defp to_documents([%Document{} | _] = list), do: check_documents(list, list, 0)
+
+  defp to_documents(term), do: Builder.build(term)
+
+  # A list that starts with a document must hold only documents
+  defp check_documents([%Document{} | rest], list, index),
+    do: check_documents(rest, list, index + 1)
+
+  defp check_documents([], list, _index), do: {:ok, list}
+
+  defp check_documents([item | _], _list, index) do
+    error = EncodeError.unsupported(item, "non-document in a list of documents")
+    {:error, EncodeError.prepend_location(error, index)}
+  end
+
+  defp check_documents(tail, _list, _index),
+    do: {:error, EncodeError.unsupported(tail, "improper list")}
+
+  defp emit(%Document{} = document), do: Emitter.document(document)
+  defp emit(documents), do: Emitter.documents(documents)
 
   @default_opts [
     return: :auto,

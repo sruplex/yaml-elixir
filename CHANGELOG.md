@@ -8,6 +8,12 @@
   and `nil` for empty input. Change `{:ok, [doc]} = YAML.decode(...)` to
   `{:ok, doc} = YAML.decode(...)`.
 
+### Added
+
+- `YAML.encode/2` and `YAML.encode!/2`.
+- `YAML.encode_to_iodata/2` and `YAML.encode_to_iodata!/2`.
+- `YAML.EncodeError`, with `:cause` and the `:location` of the value that failed.
+
 ### Fixed
 
 - `return: :first_document` returns `nil` for empty input instead of crashing.

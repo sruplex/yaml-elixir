@@ -27,13 +27,25 @@ defmodule YAML.Emitter do
 
   @spec documents([%Document{}]) :: {:ok, iodata()} | {:error, EncodeError.t()}
   def documents(documents) when is_list(documents) do
-    {:ok, Enum.map(documents, &emit_document/1)}
+    {:ok, emit_documents(documents, 0)}
   catch
     {:encode_error, %EncodeError{} = error} -> {:error, error}
   end
 
   # Walkers
   # -------
+
+  defp emit_documents([document | rest], index),
+    do: [emit_document_at(document, index) | emit_documents(rest, index + 1)]
+
+  defp emit_documents([], _index), do: []
+
+  # Add the document index to the location of an error from inside it
+  defp emit_document_at(document, index) do
+    emit_document(document)
+  catch
+    {:encode_error, error} -> throw({:encode_error, EncodeError.prepend_location(error, index)})
+  end
 
   defp emit_document(%Document{root: root}), do: ["---\n", emit_root(root)]
 
