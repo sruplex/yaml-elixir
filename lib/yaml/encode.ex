@@ -1,14 +1,27 @@
 defmodule YAML.Encode do
   @moduledoc false
 
-  alias YAML.AST.Scalar
+  alias YAML.AST.{Scalar, List, Mapping}
   alias YAML.EncodeError
+
+  @indent_width 2
 
   # Plain words YAML would read as another type, in any letter case
   @reserved_words ~w(true false null yes no on off y n)
 
   # Plain strings YAML would read as null, or as a merge or value key
   @reserved_symbols ~w(~ << =)
+
+  # Atoms written as YAML values instead of as their names
+  @value_atoms [nil, true, false, :"+inf", :"-inf", :nan]
+
+  # Keys written as a scalar
+  defguardp is_scalar_key(key)
+            when is_binary(key) or is_atom(key) or is_number(key) or is_struct(key, Date) or
+                   is_struct(key, Time) or is_struct(key, NaiveDateTime) or
+                   is_struct(key, DateTime)
+
+  defguardp is_plain_map(term) when is_map(term) and not is_struct(term)
 
   # Characters that must be escaped in a double-quoted string
   defguardp is_escaped_byte(c) when c < 0x20 or c == 0x7F
@@ -18,14 +31,23 @@ defmodule YAML.Encode do
 
   @spec data(term()) :: {:ok, iodata()} | {:error, EncodeError.t()}
   def data(term) do
-    {:ok, write_scalar(term)}
+    written =
+      case term do
+        map when map == %{} -> "{}"
+        [] -> "[]"
+        map when is_plain_map(map) -> data_pairs(map, 0, "")
+        list when is_list(list) -> data_items(list, 0, "")
+        value -> write_scalar(value)
+      end
+
+    {:ok, written}
   catch
     {:encode_error, %EncodeError{} = error} -> {:error, error}
   end
 
-  @spec node(%Scalar{}) :: {:ok, iodata()} | {:error, EncodeError.t()}
-  def node(%Scalar{value: value}) do
-    {:ok, write_scalar(value)}
+  @spec node(%Scalar{} | %List{} | %Mapping{}) :: {:ok, iodata()} | {:error, EncodeError.t()}
+  def node(node) do
+    {:ok, ast_node(node, 0)}
   catch
     {:encode_error, %EncodeError{} = error} -> {:error, error}
   end
@@ -33,8 +55,212 @@ defmodule YAML.Encode do
   # Errors are thrown inside the walk and returned by the public functions
   defp fail(error), do: throw({:encode_error, error})
 
+  # Plain data
+  # ----------
+
+  # The first line takes `first_indent`, so it can follow "- " on the same line
+  defp data_pairs(map, level, first_indent) do
+    [first | rest] = Map.to_list(map)
+
+    # Built only when a second line needs it, so deep single-item nesting stays cheap
+    line_indent = if rest == [], do: "", else: indent(level)
+
+    [
+      data_pair(first, map, level, first_indent)
+      | Enum.map(rest, &data_pair(&1, map, level, line_indent))
+    ]
+  end
+
+  # Adds the map key to the location of an error from inside the value
+  defp data_pair({key, value}, map, level, line_indent) when is_scalar_key(key) do
+    written_key = write_scalar(key_text(key, map))
+
+    written =
+      try do
+        data_value(value, level + 1)
+      catch
+        {:encode_error, error} ->
+          fail(EncodeError.prepend_location(error, key))
+      end
+
+    [line_indent, written_key, ?: | written]
+  end
+
+  # Map and list keys use the explicit "? key" form, with the value on the ":" line
+  defp data_pair({key, value}, _map, level, line_indent) when is_plain_map(key) or is_list(key) do
+    written_key =
+      if starts_explicit?(key), do: [flow(key), ?\n], else: data_item_value(key, level + 1)
+
+    [line_indent, "? ", written_key, indent(level), ?: | data_value(value, level + 1)]
+  catch
+    {:encode_error, error} ->
+      fail(EncodeError.prepend_location(error, key))
+  end
+
+  defp data_pair({key, _value}, _map, _level, _line_indent),
+    do: fail(EncodeError.invalid_key(key, type_name(key)))
+
+  # A key written as text would repeat a string key with the same text
+  defp key_text(key, map) do
+    text = as_text(key)
+    if text !== key and is_map_key(map, text), do: fail(EncodeError.duplicate_key(key))
+    text
+  end
+
+  # yamerl reads a map key that starts with another "? key" as null, so it's written in flow style
+  defp starts_explicit?(map) when is_plain_map(map) and map != %{} do
+    [{key, _value} | _] = Map.to_list(map)
+    is_plain_map(key) or is_list(key)
+  end
+
+  defp starts_explicit?(_key), do: false
+
+  defp data_items([first | rest], level, first_indent) do
+    line_indent = if rest == [], do: "", else: indent(level)
+    [data_item(first, level, first_indent, 0) | data_next_items(rest, level, line_indent, 1)]
+  end
+
+  defp data_next_items([item | rest], level, line_indent, index) do
+    [
+      data_item(item, level, line_indent, index)
+      | data_next_items(rest, level, line_indent, index + 1)
+    ]
+  end
+
+  defp data_next_items([], _level, _line_indent, _index), do: []
+
+  # Adds the list index to the location of an error from inside the item
+  defp data_item(item, level, line_indent, index) do
+    [line_indent, "- " | data_item_value(item, level + 1)]
+  catch
+    {:encode_error, error} ->
+      fail(EncodeError.prepend_location(error, index))
+  end
+
+  # Scalars and empty collections stay on the key's line, others start on the next
+  defp data_value(map, _level) when map == %{}, do: " {}\n"
+  defp data_value([], _level), do: " []\n"
+
+  defp data_value(map, level) when is_plain_map(map),
+    do: [?\n | data_pairs(map, level, indent(level))]
+
+  defp data_value(list, level) when is_list(list),
+    do: [?\n | data_items(list, level, indent(level))]
+
+  defp data_value(value, _level), do: [?\s, write_scalar(value), ?\n]
+
+  # Everything after "- " starts on the same line
+  defp data_item_value(map, _level) when map == %{}, do: "{}\n"
+  defp data_item_value([], _level), do: "[]\n"
+  defp data_item_value(map, level) when is_plain_map(map), do: data_pairs(map, level, "")
+  defp data_item_value(list, level) when is_list(list), do: data_items(list, level, "")
+  defp data_item_value(value, _level), do: [write_scalar(value), ?\n]
+
+  # YAML AST
+  # --------
+
+  # The same layout as the plain data walker, over AST nodes
+
+  defp ast_node(%Scalar{value: value}, _level), do: write_scalar(value)
+  defp ast_node(%Mapping{pairs: []}, _level), do: "{}"
+  defp ast_node(%Mapping{pairs: pairs}, level), do: ast_pairs(pairs, level, indent(level))
+  defp ast_node(%List{items: []}, _level), do: "[]"
+  defp ast_node(%List{items: items}, level), do: ast_items(items, level, indent(level))
+
+  defp ast_pairs([first | rest], level, first_indent) do
+    line_indent = if rest == [], do: "", else: indent(level)
+    [ast_pair(first, level, first_indent) | Enum.map(rest, &ast_pair(&1, level, line_indent))]
+  end
+
+  defp ast_pair({%Scalar{value: key_value}, value}, level, line_indent)
+       when is_scalar_key(key_value) do
+    written_key = write_scalar(as_text(key_value))
+
+    written =
+      try do
+        ast_value(value, level + 1)
+      catch
+        {:encode_error, error} ->
+          fail(EncodeError.prepend_location(error, key_value))
+      end
+
+    [line_indent, written_key, ?: | written]
+  end
+
+  defp ast_pair({%type{} = key, value}, level, line_indent) when type in [List, Mapping] do
+    written_key =
+      if ast_starts_explicit?(key),
+        do: [flow(ast_data(key)), ?\n],
+        else: ast_item_value(key, level + 1)
+
+    [line_indent, "? ", written_key, indent(level), ?: | ast_value(value, level + 1)]
+  catch
+    {:encode_error, error} ->
+      fail(EncodeError.prepend_location(error, key))
+  end
+
+  # The same check as starts_explicit?/1, on an AST map
+  defp ast_starts_explicit?(%Mapping{pairs: [{%type{}, _value} | _]})
+       when type in [List, Mapping],
+       do: true
+
+  defp ast_starts_explicit?(_key), do: false
+
+  # An AST key as plain data, to write in flow style
+  defp ast_data(%Scalar{value: value}), do: value
+  defp ast_data(%Mapping{pairs: pairs}), do: pairs |> ast_data_pairs() |> Map.new()
+  defp ast_data(%List{items: items}), do: ast_data_items(items)
+
+  defp ast_data_pairs([{key, value} | rest]),
+    do: [{ast_data(key), ast_data(value)} | ast_data_pairs(rest)]
+
+  defp ast_data_pairs([]), do: []
+
+  defp ast_data_items([item | rest]), do: [ast_data(item) | ast_data_items(rest)]
+  defp ast_data_items([]), do: []
+
+  defp ast_items([first | rest], level, first_indent) do
+    line_indent = if rest == [], do: "", else: indent(level)
+    [ast_item(first, level, first_indent, 0) | ast_next_items(rest, level, line_indent, 1)]
+  end
+
+  defp ast_next_items([item | rest], level, line_indent, index) do
+    [
+      ast_item(item, level, line_indent, index)
+      | ast_next_items(rest, level, line_indent, index + 1)
+    ]
+  end
+
+  defp ast_next_items([], _level, _line_indent, _index), do: []
+
+  defp ast_item(item, level, line_indent, index) do
+    [line_indent, "- " | ast_item_value(item, level + 1)]
+  catch
+    {:encode_error, error} ->
+      fail(EncodeError.prepend_location(error, index))
+  end
+
+  defp ast_value(%Scalar{value: value}, _level), do: [?\s, write_scalar(value), ?\n]
+  defp ast_value(%Mapping{pairs: []}, _level), do: " {}\n"
+  defp ast_value(%List{items: []}, _level), do: " []\n"
+  defp ast_value(node, level), do: [?\n | ast_node(node, level)]
+
+  defp ast_item_value(%Scalar{value: value}, _level), do: [write_scalar(value), ?\n]
+  defp ast_item_value(%Mapping{pairs: []}, _level), do: "{}\n"
+  defp ast_item_value(%List{items: []}, _level), do: "[]\n"
+  defp ast_item_value(%Mapping{pairs: pairs}, level), do: ast_pairs(pairs, level, "")
+  defp ast_item_value(%List{items: items}, level), do: ast_items(items, level, "")
+
   # Writers
   # -------
+
+  # Atoms, dates and times as the text they're written as
+  defp as_text(atom) when is_atom(atom) and atom not in @value_atoms, do: Atom.to_string(atom)
+  defp as_text(%Date{} = date), do: Date.to_iso8601(date)
+  defp as_text(%Time{} = time), do: Time.to_iso8601(time)
+  defp as_text(%NaiveDateTime{} = datetime), do: NaiveDateTime.to_iso8601(datetime)
+  defp as_text(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
+  defp as_text(value), do: value
 
   # Decode returns .inf, -.inf and .nan as these atoms
   defp write_scalar(:"+inf"), do: ".inf"
@@ -66,13 +292,8 @@ defmodule YAML.Encode do
 
   defp write_scalar(atom) when is_atom(atom), do: write_scalar(Atom.to_string(atom))
 
-  defp write_scalar(%Date{} = date), do: write_scalar(Date.to_iso8601(date))
-  defp write_scalar(%Time{} = time), do: write_scalar(Time.to_iso8601(time))
-
-  defp write_scalar(%NaiveDateTime{} = datetime),
-    do: write_scalar(NaiveDateTime.to_iso8601(datetime))
-
-  defp write_scalar(%DateTime{} = datetime), do: write_scalar(DateTime.to_iso8601(datetime))
+  defp write_scalar(%type{} = value) when type in [Date, Time, NaiveDateTime, DateTime],
+    do: write_scalar(as_text(value))
 
   defp write_scalar(value),
     do: fail(EncodeError.unsupported(value, type_name(value)))
@@ -172,4 +393,68 @@ defmodule YAML.Encode do
   defp utf8_size(c) when c < 0x800, do: 2
   defp utf8_size(c) when c < 0x10000, do: 3
   defp utf8_size(_c), do: 4
+
+  # Flow style
+  # ----------
+
+  # Strings are always quoted, since "," "[" "]" "{" "}" mean something in flow style
+  defp flow(map) when map == %{}, do: "{}"
+  defp flow([]), do: "[]"
+  defp flow(map) when is_plain_map(map), do: [?{, flow_pairs(Map.to_list(map), map), ?}]
+  defp flow(list) when is_list(list), do: [?[, flow_items(list, 0), ?]]
+
+  defp flow(value) do
+    case as_text(value) do
+      text when is_binary(text) -> [?", escape(text, text, 0, 0), ?"]
+      other -> write_scalar(other)
+    end
+  end
+
+  defp flow_pairs([{key, value} | rest], map) do
+    written_key =
+      cond do
+        is_scalar_key(key) ->
+          flow(key_text(key, map))
+
+        is_plain_map(key) or is_list(key) ->
+          try do
+            flow(key)
+          catch
+            {:encode_error, error} -> fail(EncodeError.prepend_location(error, key))
+          end
+
+        true ->
+          fail(EncodeError.invalid_key(key, type_name(key)))
+      end
+
+    written =
+      try do
+        flow(value)
+      catch
+        {:encode_error, error} -> fail(EncodeError.prepend_location(error, key))
+      end
+
+    pair = [written_key, ": ", written]
+    if rest == [], do: [pair], else: [pair, ", " | flow_pairs(rest, map)]
+  end
+
+  defp flow_items([item | rest], index) do
+    written =
+      try do
+        flow(item)
+      catch
+        {:encode_error, error} -> fail(EncodeError.prepend_location(error, index))
+      end
+
+    if rest == [], do: [written], else: [written, ", " | flow_items(rest, index + 1)]
+  end
+
+  # Indentation
+  # -----------
+
+  for level <- 0..32 do
+    defp indent(unquote(level)), do: unquote(String.duplicate(" ", level * @indent_width))
+  end
+
+  defp indent(level), do: :binary.copy(" ", level * @indent_width)
 end
