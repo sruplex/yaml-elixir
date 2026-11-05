@@ -1,7 +1,7 @@
 defmodule YAML.Encode do
   @moduledoc false
 
-  alias YAML.AST.{Scalar, List, Mapping}
+  alias YAML.AST.{Document, Scalar, List, Mapping}
   alias YAML.EncodeError
 
   @indent_width 2
@@ -29,23 +29,31 @@ defmodule YAML.Encode do
 
   @spec data(term()) :: {:ok, iodata()} | {:error, EncodeError.t()}
   def data(term) do
-    written =
+    # The root ends with a newline, so the next "---" starts a new line
+    root =
       case term do
-        map when map == %{} -> "{}"
-        [] -> "[]"
+        map when map == %{} -> "{}\n"
+        [] -> "[]\n"
         map when is_map(map) and not is_struct(map) -> data_pairs(map, 0, "")
         list when is_list(list) -> data_items(list, 0, "")
-        value -> write_scalar(value)
+        value -> write_value(value, 1)
       end
 
-    {:ok, written}
+    {:ok, ["---\n", root]}
   catch
     {:encode_error, %EncodeError{} = error} -> {:error, error}
   end
 
-  @spec node(%Scalar{} | %List{} | %Mapping{}) :: {:ok, iodata()} | {:error, EncodeError.t()}
-  def node(node) do
-    {:ok, ast_node(node, 0)}
+  @spec document(%Document{}) :: {:ok, iodata()} | {:error, EncodeError.t()}
+  def document(%Document{} = document) do
+    {:ok, ast_document(document)}
+  catch
+    {:encode_error, %EncodeError{} = error} -> {:error, error}
+  end
+
+  @spec documents([%Document{}]) :: {:ok, iodata()} | {:error, EncodeError.t()}
+  def documents(documents) when is_list(documents) do
+    {:ok, ast_documents(documents, 0)}
   catch
     {:encode_error, %EncodeError{} = error} -> {:error, error}
   end
@@ -175,10 +183,30 @@ defmodule YAML.Encode do
   # YAML AST
   # --------
 
-  defp ast_node(%Scalar{value: value}, _level), do: write_scalar(value)
-  defp ast_node(%Mapping{pairs: []}, _level), do: "{}"
+  # Adds the document index to the location of an error from inside it
+  defp ast_documents([document | rest], index) do
+    written =
+      try do
+        ast_document(document)
+      catch
+        {:encode_error, error} ->
+          fail(EncodeError.prepend_location(error, index))
+      end
+
+    [written | ast_documents(rest, index + 1)]
+  end
+
+  defp ast_documents([], _index), do: []
+
+  defp ast_document(%Document{root: root}), do: ["---\n", ast_root(root)]
+
+  # The root ends with a newline, so the next "---" starts a new line
+  defp ast_root(%Scalar{value: value}), do: write_value(value, 1)
+  defp ast_root(%Mapping{pairs: []}), do: "{}\n"
+  defp ast_root(%List{items: []}), do: "[]\n"
+  defp ast_root(node), do: ast_node(node, 0)
+
   defp ast_node(%Mapping{pairs: pairs}, level), do: ast_pairs(pairs, level, indent(level))
-  defp ast_node(%List{items: []}, _level), do: "[]"
   defp ast_node(%List{items: items}, level), do: ast_items(items, level, indent(level))
 
   defp ast_node(node, _level),
