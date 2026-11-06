@@ -13,6 +13,7 @@
 - `return: :first_document` returns `nil` for empty input instead of crashing.
 - Non-tuple `yamerl_opts` return an error instead of crashing.
 - Unknown option errors name the option.
+- Only a plain `<<` or `!!merge <<` key is merged; a quoted or `!!str` `<<` stays a key.
 
 ## v0.2.0 (2026-08-30)
 

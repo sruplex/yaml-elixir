@@ -27,7 +27,9 @@ defmodule YAML.Parser do
   """
 
   def parse(string, yamerl_opts) when is_binary(string) do
-    opts = [:str_node_as_binary, :detailed_constr | yamerl_opts]
+    # The user's node_mods go first, so they're tried before ours
+    node_mods = Keyword.get(yamerl_opts, :node_mods, []) ++ [YAML.MergeKey]
+    opts = [:str_node_as_binary, :detailed_constr, {:node_mods, node_mods} | yamerl_opts]
 
     {:ok,
      string

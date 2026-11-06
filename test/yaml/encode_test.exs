@@ -317,8 +317,7 @@ defmodule YAML.EncodeTest do
       assert emit(%{"<<": 1}) == ~s(!!str "<<": 1\n)
       assert emit(["<<"]) == ~s(- "<<"\n)
 
-      assert YAML.decode(emit(value), enable_merge: false, return: :first_document) ==
-               {:ok, value}
+      assert YAML.decode(emit(value), return: :first_document) == {:ok, value}
     end
 
     test "errors from nested values report their location" do
