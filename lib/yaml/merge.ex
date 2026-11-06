@@ -97,7 +97,7 @@ defmodule YAML.Merge do
 
     {merge_keys, normal_keys} =
       Enum.split_with(pairs, fn {k, _} ->
-        match?(%Scalar{value: "<<"}, k)
+        match?(%Scalar{meta: %{tag: "tag:yaml.org,2002:merge"}}, k)
       end)
 
     final_pairs =

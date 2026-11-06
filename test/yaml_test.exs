@@ -1305,6 +1305,62 @@ defmodule YAMLTest do
                }
     end
 
+    test "enable_merge: true -- merges only a plain or !!merge << key" do
+      for {key, merged?} <- [
+            {"<<", true},
+            {"!!merge <<", true},
+            {~s("<<"), false},
+            {"'<<'", false},
+            {"!!str <<", false},
+            {~s(!!str "<<"), false}
+          ] do
+        yaml = "defaults: &d\n  a: 1\nservice:\n  #{key}: *d\n  b: 2\n"
+        assert {:ok, %{"service" => service}} = YAML.decode(yaml)
+
+        expected = if merged?, do: %{"a" => 1, "b" => 2}, else: %{"<<" => %{"a" => 1}, "b" => 2}
+        assert service == expected, "#{key} gave #{inspect(service)}"
+      end
+    end
+
+    test "enable_merge: false -- keeps a merge key as \"<<\"" do
+      yaml = "defaults: &d\n  a: 1\nservice:\n  !!merge <<: *d\n"
+
+      assert {:ok, %{"service" => %{"<<" => %{"a" => 1}}}} =
+               YAML.decode(yaml, enable_merge: false)
+    end
+
+    test "node_mods from the user still work with merge keys" do
+      yaml = "defaults: &d\n  a: 1\nservice:\n  <<: *d\n  b: !<tag:yamerl,2012:atom> ok\n"
+
+      assert YAML.decode(yaml, yamerl_opts: [node_mods: [:yamerl_node_erlang_atom]]) ==
+               {:ok, %{"defaults" => %{"a" => 1}, "service" => %{"a" => 1, "b" => :ok}}}
+    end
+
+    test "a !!merge tag on anything but << returns an error" do
+      for {yaml, column} <- [
+            {"a: !!merge {x: 1}\n", 4},
+            {"a: !!merge [1]\n", 4},
+            {"a: !!merge foo\n", 4},
+            {"!!merge foo: {a: 1}\n", 1}
+          ] do
+        assert {:error, %YAML.ParsingError{message: message, location: {1, ^column}}} =
+                 YAML.decode(yaml)
+
+        assert message == ~s(Tag "tag:yaml.org,2002:merge" unrecognized by any module)
+      end
+    end
+
+    test "detailed: true -- a plain << that isn't a key is a string" do
+      for {yaml, path} <- [
+            {"a: <<\n", &(hd(&1.pairs) |> elem(1))},
+            {"- <<\n", &hd(&1.items)},
+            {"<<\n", & &1}
+          ] do
+        assert {:ok, %{root: root}} = YAML.decode(yaml, detailed: true)
+        assert %{value: "<<", meta: %{tag: "tag:yaml.org,2002:str"}} = path.(root)
+      end
+    end
+
     test "atomize_keys: false -- keeps keys as binary strings (default)", %{yaml: yaml} do
       assert {:ok, result} = YAML.decode(yaml)
       assert {:ok, ^result} = YAML.decode(yaml, atomize_keys: false)
