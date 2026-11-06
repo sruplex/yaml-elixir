@@ -14,7 +14,7 @@ Add `yaml` to your project dependencies in `mix.exs`:
 
 ```elixir
 def deps do
-  [{:yaml, "~> 0.2.0"}]
+  [{:yaml, "~> 0.3.0"}]
 end
 ```
 
@@ -107,7 +107,7 @@ YAML.decode(string)
 
  - [x] Decoder
      - [x] Multiple docs
- - [x] Encoder
+ - [ ] Encoder
  - [ ] Streaming
  - [x] Tests
  - [x] CI
