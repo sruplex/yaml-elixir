@@ -203,6 +203,23 @@ defmodule YAML.Encode do
   defp ast_next_pairs(tail, _level, _line_indent),
     do: fail(EncodeError.unsupported(tail, "improper list"))
 
+  # A merge key from the parser is written as one
+  defp ast_pair(
+         {%Scalar{value: "<<", meta: %{tag: "tag:yaml.org,2002:merge"}}, value},
+         level,
+         line_indent
+       ) do
+    written =
+      try do
+        ast_value(value, level + 1)
+      catch
+        {:encode_error, error} ->
+          fail(EncodeError.prepend_location(error, "<<"))
+      end
+
+    [line_indent, "<<:" | written]
+  end
+
   defp ast_pair({%Scalar{value: key_value}, value}, level, line_indent)
        when is_scalar_key(key_value) do
     text = as_text(key_value)

@@ -332,8 +332,7 @@ defmodule YAML.EncodeTest do
       assert emit(%{"<<": 1}) == ~s(!!str "<<": 1\n)
       assert emit(["<<"]) == ~s(- "<<"\n)
 
-      assert YAML.decode(emit(value), enable_merge: false, return: :first_document) ==
-               {:ok, value}
+      assert YAML.decode(emit(value), return: :first_document) == {:ok, value}
     end
 
     test "errors from nested values report their location" do
@@ -567,6 +566,14 @@ defmodule YAML.EncodeTest do
         node = %Mapping{pairs: [{key, scalar}], meta: map}
         assert {:error, %EncodeError{cause: :unsupported_type}} = Encode.node(node)
       end
+    end
+
+    test "a merge key in an AST is written as a merge key" do
+      yaml = "d: &d\n  a: 1\ns:\n  <<: *d\n"
+      {:ok, [%{root: node}]} = YAML.Parser.parse(yaml, [])
+      assert {:ok, written} = Encode.node(node)
+      assert IO.iodata_to_binary(written) =~ "\n  <<:\n"
+      assert YAML.decode(IO.iodata_to_binary(written)) == YAML.decode(yaml)
     end
 
     test "map and list keys in an AST use the explicit \"? key\" form" do

@@ -27,7 +27,10 @@ defmodule YAML.Parser do
   """
 
   def parse(string, yamerl_opts) when is_binary(string) do
-    opts = [:str_node_as_binary, :detailed_constr | yamerl_opts]
+    # The user's node_mods go first, so they're tried before ours
+    {node_mods, yamerl_opts} = Keyword.pop(yamerl_opts, :node_mods, [])
+    node_mods = {:node_mods, node_mods ++ [YAML.MergeKey]}
+    opts = [:str_node_as_binary, :detailed_constr, node_mods | yamerl_opts]
 
     {:ok,
      string
@@ -45,17 +48,17 @@ defmodule YAML.Parser do
     end
   end
 
-  defp do_parse({:yamerl_doc, root}), do: %Document{root: do_parse(root)}
+  defp do_parse({:yamerl_doc, root}), do: %Document{root: do_value(root)}
 
   defp do_parse({:yamerl_map, _, tag, meta, pairs}) do
     %Mapping{
-      pairs: Enum.map(pairs, fn {k, v} -> {do_parse(k), do_parse(v)} end),
+      pairs: Enum.map(pairs, fn {k, v} -> {do_parse(k), do_value(v)} end),
       meta: build_meta(tag, meta)
     }
   end
 
   defp do_parse({:yamerl_seq, _, tag, meta, items, doc_count}) do
-    %List{items: Enum.map(items, &do_parse/1), meta: build_meta(tag, meta), length: doc_count}
+    %List{items: Enum.map(items, &do_value/1), meta: build_meta(tag, meta), length: doc_count}
   end
 
   defp do_parse({:yamerl_null, _, tag, meta}) do
@@ -95,6 +98,12 @@ defmodule YAML.Parser do
   defp do_parse({_type, _data, _tag, _meta, value}) do
     %Scalar{value: value, meta: nil}
   end
+
+  # YAML.MergeKey tags every plain "<<"; anywhere but a key it's a string
+  defp do_value({:yamerl_str, mod, ~c"tag:yaml.org,2002:merge", pres, value}),
+    do: do_parse({:yamerl_str, mod, ~c"tag:yaml.org,2002:str", pres, value})
+
+  defp do_value(node), do: do_parse(node)
 
   defp build_meta(tag, meta) do
     %Meta{tag: to_string(tag), line: meta[:line], column: meta[:column]}
