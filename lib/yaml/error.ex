@@ -4,6 +4,8 @@ defmodule YAML.ParsingError do
   # Exception Callbacks
   # -------------------
 
+  def message(%{location: nil} = error), do: error.message
+
   def message(error) do
     "#{error.message} (at #{inspect(error.location)})"
   end

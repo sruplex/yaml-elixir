@@ -24,6 +24,7 @@
 - Non-tuple `yamerl_opts` return an error instead of crashing.
 - Unknown option errors name the option.
 - Hex package and documentation links point to the right GitHub repository.
+- Input that crashes yamerl's parser returns an error instead of raising.
 
 ## v0.2.0 (2026-08-30)
 

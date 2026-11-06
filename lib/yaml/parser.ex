@@ -3,6 +3,7 @@ defmodule YAML.Parser do
   Parses YAML strings into AST or simplified Elixir data structures.
   """
 
+  alias YAML.ParsingError
   alias YAML.AST.{Document, Scalar, List, Mapping, Meta}
 
   @doc """
@@ -29,13 +30,18 @@ defmodule YAML.Parser do
   def parse(string, yamerl_opts) when is_binary(string) do
     opts = [:str_node_as_binary, :detailed_constr | yamerl_opts]
 
-    {:ok,
-     string
-     |> :yamerl_constr.string(opts)
-     |> do_parse()}
-  catch
-    {:yamerl_exception, error} ->
-      {:error, YAML.ParsingError.build_error(error)}
+    try do
+      :yamerl_constr.string(string, opts)
+    rescue
+      # yamerl's parser crashes on some input instead of returning its own error
+      _error ->
+        {:error, %ParsingError{type: :parse_error, message: "yamerl failed to parse the input"}}
+    catch
+      {:yamerl_exception, error} ->
+        {:error, ParsingError.build_error(error)}
+    else
+      documents -> {:ok, do_parse(documents)}
+    end
   end
 
   def parse!(string, yamerl_opts) when is_binary(string) do
