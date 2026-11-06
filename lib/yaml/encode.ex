@@ -164,14 +164,14 @@ defmodule YAML.Encode do
   defp data_value(list, level) when is_list(list),
     do: [?\n | data_items(list, level, indent(level))]
 
-  defp data_value(value, _level), do: [?\s, write_scalar(value), ?\n]
+  defp data_value(value, level), do: [?\s | write_value(value, level)]
 
   # Everything after "- " starts on the same line
   defp data_item_value(map, _level) when map == %{}, do: "{}\n"
   defp data_item_value([], _level), do: "[]\n"
   defp data_item_value(map, level) when is_plain_map(map), do: data_pairs(map, level, "")
   defp data_item_value(list, level) when is_list(list), do: data_items(list, level, "")
-  defp data_item_value(value, _level), do: [write_scalar(value), ?\n]
+  defp data_item_value(value, level), do: write_value(value, level)
 
   # YAML AST
   # --------
@@ -317,12 +317,12 @@ defmodule YAML.Encode do
     [line_indent, "- " | written]
   end
 
-  defp ast_value(%Scalar{value: value}, _level), do: [?\s, write_scalar(value), ?\n]
+  defp ast_value(%Scalar{value: value}, level), do: [?\s | write_value(value, level)]
   defp ast_value(%Mapping{pairs: []}, _level), do: " {}\n"
   defp ast_value(%List{items: []}, _level), do: " []\n"
   defp ast_value(node, level), do: [?\n | ast_node(node, level)]
 
-  defp ast_item_value(%Scalar{value: value}, _level), do: [write_scalar(value), ?\n]
+  defp ast_item_value(%Scalar{value: value}, level), do: write_value(value, level)
   defp ast_item_value(%Mapping{pairs: []}, _level), do: "{}\n"
   defp ast_item_value(%List{items: []}, _level), do: "[]\n"
   defp ast_item_value(%Mapping{pairs: pairs}, level), do: ast_pairs(pairs, level, "")
@@ -342,6 +342,47 @@ defmodule YAML.Encode do
   defp as_text(%NaiveDateTime{} = datetime), do: NaiveDateTime.to_iso8601(datetime)
   defp as_text(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
   defp as_text(value), do: value
+
+  # A value and its newline; multi-line strings become block scalars
+  defp write_value("", _level), do: [~s(""), ?\n]
+
+  # A string with a newline is never plain, so plain ones skip the block checks
+  defp write_value(text, level) when is_binary(text) do
+    cond do
+      plain_chars?(text) ->
+        [if(reserved?(text) or quote_start?(text), do: quoted(text), else: text), ?\n]
+
+      :binary.match(text, "\n") != :nomatch and not indented_start?(text) and
+          block_safe?(text, false, false) ->
+        body = String.trim_trailing(text, "\n")
+
+        {chomp, extra} =
+          case byte_size(text) - byte_size(body) do
+            0 -> {"|-", []}
+            1 -> {"|", []}
+            newlines -> {"|+", [:binary.copy("\n", newlines - 1)]}
+          end
+
+        [chomp, ?\n | block_lines(:binary.split(body, "\n", [:global]), indent(level), extra)]
+
+      true ->
+        [quoted(text), ?\n]
+    end
+  end
+
+  defp write_value(atom, level) when is_atom(atom) and atom not in @value_atoms,
+    do: write_value(Atom.to_string(atom), level)
+
+  defp write_value(value, _level), do: [write_scalar(value), ?\n]
+
+  # Empty lines get no indent
+  defp block_lines(["" | lines], line_indent, extra),
+    do: [?\n | block_lines(lines, line_indent, extra)]
+
+  defp block_lines([line | lines], line_indent, extra),
+    do: [line_indent, line, ?\n | block_lines(lines, line_indent, extra)]
+
+  defp block_lines([], _line_indent, extra), do: extra
 
   # Decode returns .inf, -.inf and .nan as these atoms
   defp write_scalar(:"+inf"), do: ".inf"
@@ -367,7 +408,7 @@ defmodule YAML.Encode do
 
   defp write_scalar(str) when is_binary(str) do
     if reserved?(str) or quote_start?(str) or not plain_chars?(str),
-      do: [?", escape(str, str, 0, 0), ?"],
+      do: quoted(str),
       else: str
   end
 
@@ -425,6 +466,8 @@ defmodule YAML.Encode do
   defp plain_chars?(<<_::utf8, rest::binary>>), do: plain_chars?(rest)
   defp plain_chars?(<<>>), do: true
   defp plain_chars?(_invalid), do: false
+
+  defp quoted(str), do: [?", escape(str, str, 0, 0), ?"]
 
   # Copies runs of safe bytes as slices of the original string
   defp escape(<<c, rest::binary>>, str, skip, 0) when c in [?", ?\\] or is_escaped_byte(c),
@@ -486,7 +529,7 @@ defmodule YAML.Encode do
 
   defp flow(value) do
     case as_text(value) do
-      text when is_binary(text) -> [?", escape(text, text, 0, 0), ?"]
+      text when is_binary(text) -> quoted(text)
       other -> write_scalar(other)
     end
   end
@@ -538,6 +581,33 @@ defmodule YAML.Encode do
 
   defp flow_items(tail, index),
     do: fail(EncodeError.prepend_location(EncodeError.unsupported(tail, "improper list"), index))
+
+  # Block scalars
+  # -------------
+
+  # Whether the first text line starts with a space or a tab
+  defp indented_start?(<<?\n, rest::binary>>), do: indented_start?(rest)
+  defp indented_start?(<<c, _::binary>>) when c in [?\s, ?\t], do: true
+  defp indented_start?(_str), do: false
+
+  # No escaped characters, and some text after a newline
+  defp block_safe?(<<?\n, rest::binary>>, multi, _newline), do: block_safe?(rest, multi, true)
+
+  defp block_safe?(<<?\t, rest::binary>>, multi, newline),
+    do: block_safe?(rest, multi or newline, newline)
+
+  defp block_safe?(<<c, _::binary>>, _multi, _newline) when is_escaped_byte(c), do: false
+
+  defp block_safe?(<<c, rest::binary>>, multi, newline) when c < 0x80,
+    do: block_safe?(rest, multi or newline, newline)
+
+  defp block_safe?(<<c::utf8, _::binary>>, _multi, _newline) when is_escaped_char(c), do: false
+
+  defp block_safe?(<<_::utf8, rest::binary>>, multi, newline),
+    do: block_safe?(rest, multi or newline, newline)
+
+  defp block_safe?(<<>>, multi, _newline), do: multi
+  defp block_safe?(_invalid, _multi, _newline), do: false
 
   # Indentation
   # -----------
