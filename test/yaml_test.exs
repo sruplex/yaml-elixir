@@ -1097,6 +1097,16 @@ defmodule YAMLTest do
       end
     end
 
+    test "returns error when yamerl's parser crashes" do
+      # Valid YAML that yamerl crashes on
+      yaml = "a:\n  - {{ x }}\nb:\n  - 1\n"
+
+      assert {:error, %YAML.ParsingError{type: :parse_error, location: nil} = error} =
+               YAML.decode(yaml)
+
+      assert_raise YAML.ParsingError, error.message, fn -> YAML.decode!(yaml) end
+    end
+
     test "returns error for invalid :return option", %{yaml: yaml} do
       assert {:error, %YAML.ArgumentError{option: :return, value: :invalid}} =
                YAML.decode(yaml, return: :invalid)

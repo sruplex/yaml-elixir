@@ -22,6 +22,7 @@
 - Non-tuple `yamerl_opts` return an error instead of crashing.
 - Unknown option errors name the option.
 - Only a plain `<<` key or a `!!merge` key is merged; a quoted or `!!str` `<<` stays a key.
+- Input that crashes yamerl's parser returns an error instead of raising.
 
 ## v0.2.0 (2026-08-30)
 
