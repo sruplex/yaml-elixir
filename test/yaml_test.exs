@@ -1097,6 +1097,16 @@ defmodule YAMLTest do
       end
     end
 
+    test "returns error when yamerl's parser crashes" do
+      # Valid YAML that yamerl crashes on
+      yaml = "a:\n  - {{ x }}\nb:\n  - 1\n"
+
+      assert {:error, %YAML.ParsingError{type: :parse_error, location: nil} = error} =
+               YAML.decode(yaml)
+
+      assert_raise YAML.ParsingError, error.message, fn -> YAML.decode!(yaml) end
+    end
+
     test "returns error for invalid :return option", %{yaml: yaml} do
       assert {:error, %YAML.ArgumentError{option: :return, value: :invalid}} =
                YAML.decode(yaml, return: :invalid)
@@ -1605,11 +1615,278 @@ defmodule YAMLTest do
     end
   end
 
+  describe "encode_stream/2" do
+    test "yields an ok tuple for each item" do
+      assert [%{"a" => 1}, [1, 2]]
+             |> YAML.encode_stream()
+             |> Enum.map(fn {:ok, iodata} -> IO.iodata_to_binary(iodata) end) ==
+               ["---\na: 1\n", "---\n- 1\n- 2\n"]
+    end
+
+    test "yields an error for a bad item and keeps going" do
+      assert [
+               {:ok, _},
+               {:error, %YAML.EncodeError{cause: :unsupported_type, location: [1, "a"]}},
+               {:ok, _}
+             ] = [1, %{"a" => {1, 2}}, 3] |> YAML.encode_stream() |> Enum.to_list()
+    end
+
+    test "is lazy" do
+      stream = Stream.repeatedly(fn -> %{"a" => 1} end) |> YAML.encode_stream()
+      assert [{:ok, _}, {:ok, _}] = Enum.take(stream, 2)
+    end
+
+    test "raises on unknown options before encoding" do
+      assert_raise YAML.ArgumentError, "unknown option :foo", fn ->
+        YAML.encode_stream([1], foo: 1)
+      end
+    end
+  end
+
+  describe "encode_stream!/2" do
+    test "encodes each item as one document" do
+      stream = YAML.encode_stream!([%{"a" => 1}, [1, 2], "x"])
+
+      assert stream |> Enum.to_list() |> IO.iodata_to_binary() ==
+               "---\na: 1\n---\n- 1\n- 2\n---\nx\n"
+    end
+
+    test "is lazy" do
+      stream = Stream.repeatedly(fn -> %{"a" => 1} end) |> YAML.encode_stream!()
+      assert stream |> Enum.take(2) |> IO.iodata_to_binary() == "---\na: 1\n---\na: 1\n"
+    end
+
+    test "an empty enumerable gives no documents" do
+      assert [] |> YAML.encode_stream!() |> Enum.to_list() == []
+    end
+
+    test "writes AST documents as they are" do
+      assert {:ok, document} = YAML.decode("a: 1", detailed: true)
+
+      assert [document] |> YAML.encode_stream!() |> Enum.to_list() |> IO.iodata_to_binary() ==
+               "---\na: 1\n"
+    end
+
+    test "raises with the item index in the location" do
+      stream = YAML.encode_stream!([1, %{"a" => {1, 2}}])
+
+      assert_raise YAML.EncodeError, ~s{cannot encode tuple (at [1, "a"])}, fn ->
+        Stream.run(stream)
+      end
+    end
+
+    test "an error inside a document item starts with its index" do
+      assert {:ok, document} = YAML.decode("a: 1", detailed: true)
+      stream = YAML.encode_stream!([1, %{document | root: {:bad}}])
+
+      assert_raise YAML.EncodeError, "cannot encode invalid AST node (at [1])", fn ->
+        Stream.run(stream)
+      end
+    end
+
+    test "a list of documents as one item is not expanded" do
+      assert {:ok, document} = YAML.decode("a: 1", detailed: true)
+      stream = YAML.encode_stream!([[document]])
+
+      assert_raise YAML.EncodeError, "cannot encode YAML.AST.Document struct (at [0, 0])", fn ->
+        Stream.run(stream)
+      end
+    end
+
+    test "raises on unknown options before encoding" do
+      assert_raise YAML.ArgumentError, "unknown option :foo", fn ->
+        YAML.encode_stream!([1], foo: 1)
+      end
+    end
+
+    test "takes the same options as encode/2" do
+      stream = YAML.encode_stream!([%{b: 1, a: 2}], sort_maps: true)
+      assert stream |> Enum.to_list() |> IO.iodata_to_binary() == "---\na: 2\nb: 1\n"
+    end
+
+    @tag :tmp_dir
+    test "streams into a file that decodes back", %{tmp_dir: dir} do
+      path = Path.join(dir, "out.yml")
+      items = [%{"a" => 1}, %{"b" => [2, 3]}]
+
+      items
+      |> YAML.encode_stream!()
+      |> Stream.into(File.stream!(path, [:delayed_write]))
+      |> Stream.run()
+
+      assert path |> File.read!() |> YAML.decode(return: :all_documents) == {:ok, items}
+    end
+  end
+
   describe "fixtures round trip" do
     test "decoding, encoding and decoding again gives the same data" do
       for fixture <- [:multi_document_mixed_types, :merge_example] do
         data = fixture |> Fixtures.read!() |> YAML.decode!()
         assert data |> YAML.encode!() |> YAML.decode!() == data
+      end
+    end
+  end
+
+  describe "decode_stream/2" do
+    test "yields an ok tuple for each document" do
+      assert ["a: 1\n---\nb: 2\n"] |> YAML.decode_stream() |> Enum.to_list() ==
+               [{:ok, %{"a" => 1}}, {:ok, %{"b" => 2}}]
+    end
+
+    test "yields an error for a broken document and keeps going" do
+      yaml = "a: 1\n---\nb: [1\n---\nc: 3\n"
+
+      assert [{:ok, %{"a" => 1}}, {:error, %YAML.ParsingError{} = error}, {:ok, %{"c" => 3}}] =
+               [yaml] |> YAML.decode_stream() |> Enum.to_list()
+
+      # The line counts from the start of the whole stream
+      assert {3, _column} = error.location
+    end
+
+    test "yields an error for a document that crashes yamerl and keeps going" do
+      assert [{:error, %YAML.ParsingError{}}, {:ok, %{"b" => 1}}] =
+               ["d: {x\n---\nb: 1\n"] |> YAML.decode_stream() |> Enum.to_list()
+    end
+
+    test "a --- line in a quoted string ends the document, per the YAML spec" do
+      assert [{:error, %YAML.ParsingError{location: {2, 1}}}, {:ok, "y\""}] =
+               [~s(a: "x\n---\ny")] |> YAML.decode_stream() |> Enum.to_list()
+    end
+
+    test "is lazy" do
+      stream = Stream.cycle(["---\n", "a: 1\n"]) |> YAML.decode_stream()
+      assert Enum.take(stream, 2) == [{:ok, %{"a" => 1}}, {:ok, %{"a" => 1}}]
+    end
+
+    test "raises on a chunk that isn't a binary" do
+      assert_raise ArgumentError, ~s(expected a stream of binaries, got: ~c"a: 1"), fn ->
+        [~c"a: 1"] |> YAML.decode_stream() |> Enum.to_list()
+      end
+    end
+
+    test "raises on invalid options before reading" do
+      assert_raise YAML.ArgumentError, "unknown option :foo", fn ->
+        YAML.decode_stream([], foo: 1)
+      end
+
+      assert_raise YAML.ArgumentError, "is not supported when streaming", fn ->
+        YAML.decode_stream([], return: :first_document)
+      end
+    end
+  end
+
+  describe "decode_stream!/2" do
+    # Cuts a string into chunks of `size` bytes, like a file read in blocks
+    defp chunks(string, size) do
+      for <<chunk::binary-size(size) <- string>>, do: chunk
+    end
+
+    defp chunked(string, size) do
+      whole = div(byte_size(string), size) * size
+
+      chunks(binary_part(string, 0, whole), size) ++
+        [binary_part(string, whole, byte_size(string) - whole)]
+    end
+
+    defp stream(yaml, opts \\ []),
+      do: List.wrap(yaml) |> YAML.decode_stream!(opts) |> Enum.to_list()
+
+    test "decodes one document at a time" do
+      assert stream("a: 1\n---\nb: 2\n") == [%{"a" => 1}, %{"b" => 2}]
+      assert stream("a: 1\n") == [%{"a" => 1}]
+      assert stream("") == []
+    end
+
+    test "gives the same documents as decode/2, however the input is cut" do
+      for yaml <- [Fixtures.read!(:multi_document_mixed_types), Fixtures.read!(:merge_example)],
+          size <- [1, 2, 7, 64, 100_000] do
+        assert yaml |> chunked(size) |> YAML.decode_stream!() |> Enum.to_list() ==
+                 YAML.decode!(yaml, return: :all_documents)
+      end
+    end
+
+    test "handles document markers, comments and directives" do
+      for yaml <- [
+            "# comment\n---\na: 1\n---\nb: 2\n",
+            "---\na: 1\n...\n---\nb: 2\n...\n",
+            "a: 1\n...\nb: 2\n",
+            "%YAML 1.2\n---\na: 1\n...\n%YAML 1.2\n---\nb: 2\n",
+            "--- 1\n--- 2\n---\n",
+            "---\n---\n",
+            "a: |\n  ---\n  x\nb: 2\n---\nc: 3\n",
+            "a: 1\r\n---\r\nb: 2\r\n",
+            "---\na: 1\n---",
+            "a: |\n  x",
+            "--- |\nx",
+            "a: |+\n  x\n\n",
+            "a: 1\n..."
+          ] do
+        assert stream(yaml) == YAML.decode!(yaml, return: :all_documents), inspect(yaml)
+      end
+    end
+
+    test "is lazy" do
+      documents = Stream.cycle(["---\n", "a: 1\n"]) |> YAML.decode_stream!() |> Enum.take(3)
+      assert documents == [%{"a" => 1}, %{"a" => 1}, %{"a" => 1}]
+    end
+
+    test "keeps a multi-byte character split across chunks" do
+      assert stream(["a: caf", <<0xC3>>, <<0xA9>>, "\n"]) == [%{"a" => "café"}]
+    end
+
+    @tag :tmp_dir
+    test "reads a file stream", %{tmp_dir: dir} do
+      path = Path.join(dir, "test.yml")
+      File.write!(path, Enum.map_join(1..100, &"---\nid: #{&1}\n"))
+
+      assert path |> File.stream!() |> YAML.decode_stream!() |> Enum.map(& &1["id"]) ==
+               Enum.to_list(1..100)
+    end
+
+    test "takes the same options as decode/2" do
+      yaml = Fixtures.read!(:merge_example)
+
+      for opts <- [
+            [atomize_keys: true],
+            [enable_merge: false],
+            [yamerl_opts: [schema: :yaml11]],
+            [detailed: true]
+          ] do
+        assert stream(yaml, opts) == YAML.decode!(yaml, [return: :all_documents] ++ opts)
+      end
+    end
+
+    test "line numbers match the whole stream" do
+      for yaml <- [
+            "a: 1\n---\nb:\n  - x\n---\nc: 3\n",
+            "# comment\n---\na: 1\n...\n# comment\n%YAML 1.2\n---\nb:\n  - x\n",
+            "a: 1\n---\nb: |\n  x"
+          ] do
+        assert stream(yaml, detailed: true) ==
+                 YAML.decode!(yaml, detailed: true, return: :all_documents),
+               inspect(yaml)
+      end
+    end
+
+    test "places an empty document's null at the end of its --- line" do
+      assert [_, %YAML.AST.Document{root: %YAML.AST.Scalar{value: nil} = root}, _] =
+               stream("a: 1\n---\n---\nb: 2\n", detailed: true)
+
+      assert {root.meta.line, root.meta.column} == {2, 4}
+    end
+
+    test "raises on invalid YAML with the line in the whole stream" do
+      error = assert_raise YAML.ParsingError, fn -> stream("a: 1\n---\nb: 2\n---\nc: [1\n") end
+      assert error.location == {5, 6}
+    end
+
+    test "raises on invalid options before reading" do
+      assert_raise YAML.ArgumentError, "unknown option :foo", fn ->
+        YAML.decode_stream!([], foo: 1)
+      end
+
+      assert_raise YAML.ArgumentError, "is not supported when streaming", fn ->
+        YAML.decode_stream!([], return: :first_document)
       end
     end
   end

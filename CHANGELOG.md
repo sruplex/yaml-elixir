@@ -12,6 +12,8 @@
 
 - `YAML.encode/2` and `YAML.encode!/2`, for Elixir data, a `YAML.AST.Document` or a list of them (#18).
 - `YAML.encode_to_iodata/2` and `YAML.encode_to_iodata!/2` (#18).
+- `YAML.encode_stream/2` and `YAML.encode_stream!/2` (#19).
+- `YAML.decode_stream/2` and `YAML.decode_stream!/2` (#19).
 - `:sort_maps` encode option to write map keys in sorted order (#18).
 - `YAML.EncodeError`, with `:cause` and the `:location` of the value that failed (#9).
 
@@ -21,6 +23,8 @@
 - Non-tuple `yamerl_opts` return an error instead of crashing.
 - Unknown option errors name the option.
 - Only a plain `<<` key or a `!!merge` key is merged; a quoted or `!!str` `<<` stays a key.
+- Input that crashes yamerl's parser returns an error instead of raising.
+- Decoding works when yamerl is not loaded, e.g. in scripts run without Mix.
 
 ## v0.2.0 (2026-08-30)
 

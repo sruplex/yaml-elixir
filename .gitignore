@@ -25,3 +25,5 @@ yaml-*.tar
 #ignore tool versions
 .tool-versions
 
+# Created by ExUnit for tests tagged :tmp_dir
+/tmp/
