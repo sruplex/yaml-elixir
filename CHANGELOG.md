@@ -8,6 +8,13 @@
   and `nil` for empty input. Change `{:ok, [doc]} = YAML.decode(...)` to
   `{:ok, doc} = YAML.decode(...)`.
 
+### Added
+
+- `YAML.encode/2` and `YAML.encode!/2`, for Elixir data, a `YAML.AST.Document` or a list of them (#18).
+- `YAML.encode_to_iodata/2` and `YAML.encode_to_iodata!/2` (#18).
+- `:sort_maps` encode option to write map keys in sorted order (#18).
+- `YAML.EncodeError`, with `:cause` and the `:location` of the value that failed (#9).
+
 ### Fixed
 
 - `return: :first_document` returns `nil` for empty input instead of crashing.

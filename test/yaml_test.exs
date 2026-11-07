@@ -1402,4 +1402,215 @@ defmodule YAMLTest do
       assert doc3 |> Map.keys() |> Enum.all?(&is_atom/1)
     end
   end
+
+  describe "encode/2" do
+    test "encodes Elixir data" do
+      assert YAML.encode(%{"a" => 1, "b" => [true, nil]}) ==
+               {:ok, "---\na: 1\nb:\n  - true\n  - null\n"}
+
+      assert YAML.encode("a\nb\n") == {:ok, "---\n|\n  a\n  b\n"}
+      assert YAML.encode(nil) == {:ok, "---\nnull\n"}
+    end
+
+    test "decodes back to the same data" do
+      values = [
+        %{"name" => "Ali", "tags" => ["a", "b"], "port" => 4000, "ratio" => 1.5},
+        [%{"run" => "mix deps.get\nmix test\n"}, %{}, []],
+        %{"yes" => "no", "123" => "", "nested" => %{"deep" => [[1, 2], nil]}},
+        "plain string",
+        42
+      ]
+
+      for value <- values do
+        assert value |> YAML.encode!() |> YAML.decode!() == value
+      end
+    end
+
+    test "encodes a decoded AST document back to the same YAML data" do
+      yaml = "a: 1\nb:\n  - x\n  - c: true\n"
+      assert {:ok, document} = YAML.decode(yaml, detailed: true)
+      assert {:ok, encoded} = YAML.encode(document)
+      assert YAML.decode(encoded) == YAML.decode(yaml)
+    end
+
+    test "encodes a list of documents as multiple documents" do
+      yaml = "a: 1\n---\n- 2\n"
+      assert {:ok, documents} = YAML.decode(yaml, detailed: true)
+      assert {:ok, encoded} = YAML.encode(documents)
+      assert encoded == "---\na: 1\n---\n- 2\n"
+      assert YAML.decode(encoded) == {:ok, [%{"a" => 1}, [2]]}
+    end
+
+    test "returns an error for values that can't be encoded" do
+      assert {:error, %YAML.EncodeError{cause: :unsupported_type}} = YAML.encode({1, 2})
+      assert {:error, %YAML.EncodeError{cause: :invalid_key}} = YAML.encode(%{{1} => 2})
+
+      assert {:error, %YAML.EncodeError{message: "cannot encode invalid UTF-8 string"}} =
+               YAML.encode(%{"a" => <<255>>})
+    end
+
+    test "an empty list is plain data, not an empty list of documents" do
+      assert YAML.encode([]) == {:ok, "---\n[]\n"}
+    end
+
+    test "a list of documents round-trips through a detailed decode" do
+      yaml = "---\na: [1, 2]\n---\nx\n---\n|\n  a\n  b\n"
+      assert {:ok, documents} = YAML.decode(yaml, detailed: true, return: :all_documents)
+      assert {:ok, encoded} = YAML.encode(documents)
+
+      assert YAML.decode(encoded, return: :all_documents) ==
+               {:ok, [%{"a" => [1, 2]}, "x", "a\nb\n"]}
+    end
+
+    test "a list with one document is a single document" do
+      assert {:ok, document} = YAML.decode("a: 1", detailed: true)
+      assert YAML.encode([document]) == {:ok, "---\na: 1\n"}
+    end
+
+    test "a list starting with a document must hold only documents" do
+      assert {:ok, document} = YAML.decode("a: 1", detailed: true)
+
+      assert {:error,
+              %YAML.EncodeError{
+                message: "cannot encode non-document in a list of documents",
+                location: [2]
+              }} = YAML.encode([document, document, {1, 2}])
+
+      assert {:error, %YAML.EncodeError{message: "cannot encode improper list", location: [1]}} =
+               YAML.encode([document | :tail])
+    end
+
+    test "a list starting with other data is plain data" do
+      assert {:ok, document} = YAML.decode("a: 1", detailed: true)
+
+      assert {:error,
+              %YAML.EncodeError{message: "cannot encode YAML.AST.Document struct", location: [1]}} =
+               YAML.encode([1, document])
+    end
+
+    test "a keyword list is not encoded, since tuples are not supported" do
+      keyword = [foo: 1, bar: 2]
+
+      assert {:error, %YAML.EncodeError{message: "cannot encode tuple", location: [0]}} =
+               YAML.encode(keyword)
+    end
+
+    test "an invalid AST returns an error" do
+      assert {:error, %YAML.EncodeError{message: "cannot encode invalid AST node"}} =
+               YAML.encode(%YAML.AST.Document{})
+    end
+
+    test "returns an error for unknown options" do
+      assert {:error, %YAML.ArgumentError{message: "unknown option :foo", option: :foo, value: 1}} =
+               YAML.encode(%{}, foo: 1)
+    end
+
+    test "returns an error for options that are not a keyword list" do
+      for {opts, bad} <- [{[:foo], :foo}, {[{"x", 1}], {"x", 1}}] do
+        assert {:error,
+                %YAML.ArgumentError{message: "expected a keyword list", option: nil, value: ^bad}} =
+                 YAML.encode(%{}, opts)
+      end
+    end
+
+    test "sort_maps: true writes map keys in sorted order" do
+      value = %{z: 1, a: %{"x" => 2, "b" => 3}, m: [%{c: 4, b: 5}]}
+
+      assert YAML.encode(value, sort_maps: true) ==
+               {:ok, "---\na:\n  b: 3\n  x: 2\nm:\n  - b: 5\n    c: 4\nz: 1\n"}
+
+      big = Map.new(1..40, &{"k#{String.pad_leading(Integer.to_string(&1), 2, "0")}", &1})
+      keys = big |> YAML.encode!(sort_maps: true) |> String.split("\n", trim: true) |> tl()
+
+      assert keys ==
+               Enum.map(1..40, &"k#{String.pad_leading(Integer.to_string(&1), 2, "0")}: #{&1}")
+    end
+
+    test "sort_maps: true also sorts keys written in flow style" do
+      value = %{%{[1] => 1, z: 2, a: 3} => 1}
+
+      assert YAML.encode(value, sort_maps: true) ==
+               {:ok, ~s(---\n? {[1]: 1, "a": 3, "z": 2}\n: 1\n)}
+    end
+
+    test "without sort_maps, map keys follow Elixir's map order" do
+      value = %{c: 1, a: 2, b: 3}
+      lines = value |> YAML.encode!() |> String.split("\n", trim: true) |> tl()
+      assert lines == Enum.map(Map.to_list(value), fn {k, v} -> "#{k}: #{v}" end)
+    end
+
+    test "sort_maps must be a boolean" do
+      assert {:error, %YAML.ArgumentError{option: :sort_maps, message: "must be a boolean"}} =
+               YAML.encode(%{}, sort_maps: :yes)
+    end
+
+    test "dates and times are written as quoted ISO 8601 strings" do
+      assert YAML.encode(%{"d" => ~D[2024-01-02]}) == {:ok, ~s(---\nd: "2024-01-02"\n)}
+      assert YAML.decode!(YAML.encode!(%{"d" => ~D[2024-01-02]})) == %{"d" => "2024-01-02"}
+    end
+
+    test "an error at the top has a plain message" do
+      assert {:error, error} = YAML.encode({1, 2})
+      assert error.location == []
+      assert Exception.message(error) == "cannot encode tuple"
+    end
+  end
+
+  describe "encode!/2" do
+    test "returns the YAML or raises" do
+      assert YAML.encode!(%{"a" => 1}) == "---\na: 1\n"
+      assert_raise YAML.EncodeError, "cannot encode tuple", fn -> YAML.encode!({1, 2}) end
+      assert_raise YAML.ArgumentError, "unknown option :foo", fn -> YAML.encode!(%{}, foo: 1) end
+    end
+  end
+
+  describe "encode/2 error locations" do
+    test "nested errors say where the value is" do
+      assert {:error, %YAML.EncodeError{location: ["servers", 0, "port"]} = error} =
+               YAML.encode(%{"servers" => [%{"port" => {1, 2}}]})
+
+      assert Exception.message(error) == ~s{cannot encode tuple (at ["servers", 0, "port"])}
+    end
+
+    test "errors in a later document start with its index" do
+      assert {:ok, documents} = YAML.decode("a: 1\n---\nk: x\n", detailed: true)
+      [first, %{root: %{pairs: [{key, value}]} = root} = second] = documents
+      second = %{second | root: %{root | pairs: [{key, %{value | value: <<255>>}}]}}
+
+      assert {:error, %YAML.EncodeError{location: [1, "k"]}} = YAML.encode([first, second])
+    end
+
+    test "encode!/2 raises with the location" do
+      assert_raise YAML.EncodeError, ~s{cannot encode pid (at ["a", 1])}, fn ->
+        YAML.encode!(%{"a" => [1, self()]})
+      end
+    end
+  end
+
+  describe "encode_to_iodata/2" do
+    test "returns the same YAML as iodata" do
+      assert {:ok, iodata} = YAML.encode_to_iodata(%{"a" => [1, 2]})
+      assert IO.iodata_to_binary(iodata) == YAML.encode!(%{"a" => [1, 2]})
+    end
+
+    test "returns errors like encode/2" do
+      assert {:error, %YAML.EncodeError{}} = YAML.encode_to_iodata({1, 2})
+      assert {:error, %YAML.ArgumentError{}} = YAML.encode_to_iodata(%{}, foo: 1)
+    end
+
+    test "encode_to_iodata!/2 returns iodata or raises" do
+      assert "---\na: 1\n" == %{"a" => 1} |> YAML.encode_to_iodata!() |> IO.iodata_to_binary()
+      assert_raise YAML.EncodeError, fn -> YAML.encode_to_iodata!({1, 2}) end
+      assert_raise YAML.ArgumentError, fn -> YAML.encode_to_iodata!(%{}, foo: 1) end
+    end
+  end
+
+  describe "fixtures round trip" do
+    test "decoding, encoding and decoding again gives the same data" do
+      for fixture <- [:multi_document_mixed_types, :merge_example] do
+        data = fixture |> Fixtures.read!() |> YAML.decode!()
+        assert data |> YAML.encode!() |> YAML.decode!() == data
+      end
+    end
+  end
 end
