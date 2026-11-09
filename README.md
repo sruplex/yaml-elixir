@@ -22,6 +22,8 @@ end
 
 ## Usage
 
+### Decoding
+
 To decode YAML, call the `YAML.decode/1` method:
 
 ```elixir
@@ -101,12 +103,16 @@ YAML.decode(string)
 # }}
 ```
 
+### Encoding
+
 To encode Elixir data, call `YAML.encode/2`:
 
 ```elixir
 YAML.encode(%{"name" => "app", "ports" => [80, 443]})
 # {:ok, "---\nname: app\nports:\n  - 80\n  - 443\n"}
 ```
+
+### Streaming
 
 To read or write large files one document at a time, use
 `YAML.decode_stream/2` and `YAML.encode_stream/2`:
