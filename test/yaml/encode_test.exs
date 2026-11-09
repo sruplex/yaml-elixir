@@ -34,7 +34,7 @@ defmodule YAML.EncodeTest do
   end
 
   defp decode(yaml, schema) do
-    YAML.decode(yaml, return: :first_document, yamerl_opts: [schema: schema])
+    YAML.decode(yaml, return: :first_document, schema: schema)
   end
 
   describe "scalars" do
@@ -469,6 +469,21 @@ defmodule YAML.EncodeTest do
       assert Exception.message(error) == ~s{cannot encode tuple (at ["a", 1, "b"])}
     end
 
+    test "a key longer than 1024 characters is written as an explicit key" do
+      long = String.duplicate("k", 1100)
+
+      for {value, yaml} <- [
+            {%{long => 1}, "? #{long}\n: 1\n"},
+            {%{"a" => %{long => [1]}}, "a:\n  ? #{long}\n  :\n    - 1\n"},
+            {[%{long => 1}], "- ? #{long}\n  : 1\n"}
+          ] do
+        assert emit(value) == yaml
+        assert decode(yaml, :core) == {:ok, value}
+      end
+
+      assert emit(%{String.duplicate("k", 1024) => 1}) == String.duplicate("k", 1024) <> ": 1\n"
+    end
+
     test "a bad key is reported before a bad value" do
       assert {:error, %EncodeError{type: :invalid_utf8, location: []}} =
                Encode.data(%{<<255>> => {1}})
@@ -507,12 +522,12 @@ defmodule YAML.EncodeTest do
 
     test "map and list keys in an AST use the explicit \"? key\" form" do
       yaml = "? - a\n: 1\n? b: 2\n: 3\n"
-      {:ok, [document]} = YAML.Parser.parse(yaml, [])
+      {:ok, [document]} = YAML.Parser.parse(yaml)
       assert IO.iodata_to_binary(elem(Encode.document(document), 1)) == "---\n" <> yaml
     end
 
     test "a map key in an AST that starts with a \"? key\" is written in flow style" do
-      {:ok, [document]} = YAML.Parser.parse("? {[1]: 2}\n: 3\n", [])
+      {:ok, [document]} = YAML.Parser.parse("? {[1]: 2}\n: 3\n")
       assert IO.iodata_to_binary(elem(Encode.document(document), 1)) == "---\n? {[1]: 2}\n: 3\n"
     end
   end

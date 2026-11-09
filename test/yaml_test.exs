@@ -228,7 +228,7 @@ defmodule YAMLTest do
                     },
                     %YAML.AST.Scalar{
                       value: "Hello WORLD",
-                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:binary", line: 23, column: 23}
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:binary", line: 23, column: 14}
                     }},
                    {%YAML.AST.Scalar{
                       value: "skills",
@@ -1088,23 +1088,78 @@ defmodule YAMLTest do
       assert {:ok, [nil]} = YAML.decode("~", return: :all_documents)
     end
 
-    test "returns error for yamerl options that are not tuples" do
-      for opt <- [:foo, :str_node_as_binary] do
-        assert {:error, %YAML.ArgumentError{option: ^opt, message: message}} =
-                 YAML.decode("a: 1", yamerl_opts: [opt])
-
-        assert message =~ "expected a {key, value} tuple"
+    test "an error at the end of the input is at the end of the last line" do
+      for yaml <- ["a: [1, 2", "a: [1, 2\n", "x: 1\na: {k: 1", "x: 1\r\na: {k: 1\r\n"] do
+        line = if String.starts_with?(yaml, "x"), do: 2, else: 1
+        assert {:error, %YAML.ParsingError{location: {^line, 9}}} = YAML.decode(yaml)
       end
     end
 
-    test "returns error when yamerl's parser crashes" do
-      # Valid YAML that yamerl crashes on
-      yaml = "a:\n  - {{ x }}\nb:\n  - 1\n"
+    test "reads numbers as the YAML 1.2 core and YAML 1.1 schemas type them" do
+      for {text, core, yaml11} <- [
+            {"+0o7", "+0o7", "+0o7"},
+            {"-0x1F", "-0x1F", -31},
+            {"0x", "0x", "0x"},
+            {"0b", "0b", "0b"},
+            {"1e3", 1000.0, "1e3"},
+            {"0.1e1", 1.0, "0.1e1"},
+            {"0.1e+1", 1.0, 1.0},
+            {"685_230.15", "685_230.15", 685_230.15},
+            {"685.230_15e+03", "685.230_15e+03", 685_230.15},
+            {".1_0", ".1_0", 0.1}
+          ] do
+        assert YAML.decode!("k: " <> text)["k"] == core, "core #{text}"
+        assert YAML.decode!("k: " <> text, schema: :yaml11)["k"] == yaml11, "yaml11 #{text}"
+      end
+    end
 
-      assert {:error, %YAML.ParsingError{type: :parse_error, location: nil} = error} =
-               YAML.decode(yaml)
+    test "small and large inputs decode the same" do
+      doc = "a: [1, 2]\nb: {c: d}\n"
+      large = String.duplicate(doc <> "---\n", 1_000)
+      assert byte_size(doc) < 8_000 and byte_size(large) > 8_000
 
-      assert_raise YAML.ParsingError, error.message, fn -> YAML.decode!(yaml) end
+      assert {:ok, documents} = YAML.decode(large, return: :all_documents, detailed: true)
+      assert {:ok, [first]} = YAML.decode(doc, return: :all_documents, detailed: true)
+      assert hd(documents) == first
+      assert YAML.Native.parse(large, :core) == YAML.Native.parse_dirty(large, :core)
+    end
+
+    test "aliases that expand a small file into too many values are an error" do
+      first = "a: &a [x, x, x, x, x, x, x, x, x, x]\n"
+
+      bomb =
+        Enum.map_join(?b..?h, "", fn c ->
+          "#{<<c>>}: &#{<<c>>} [#{Enum.map_join(1..10, ", ", fn _ -> "*#{<<c - 1>>}" end)}]\n"
+        end)
+
+      assert {:error, %YAML.ParsingError{message: "aliases expand to too many values"}} =
+               YAML.decode(first <> bomb)
+    end
+
+    test "many aliases in a large file are not an error" do
+      yaml =
+        "defaults: &d {a: 1, b: 2}\nitems:\n" <>
+          Enum.map_join(1..50_000, "", &"  - {id: #{&1}, n: 1, m: 2, o: 3}\n  - *d\n")
+
+      assert {:ok, %{"items" => items}} = YAML.decode(yaml)
+      assert length(items) == 100_000
+    end
+
+    test "invalid UTF-8 is an error at the first bad byte" do
+      assert {:error, %YAML.ParsingError{message: "invalid UTF-8", location: {1, 7}}} =
+               YAML.decode(<<"a: caf", 0xE9, "\n">>)
+
+      assert {:error, %YAML.ParsingError{location: {2, 6}}} =
+               YAML.decode(<<"x: 1\nb: 日本", 0xE6, 0x97, "\n">>)
+    end
+
+    test "a list entry on a key's line is an error" do
+      assert {:error, %YAML.ParsingError{location: {1, 4}}} = YAML.decode("k: -")
+    end
+
+    test "returns error for an invalid :schema option" do
+      assert {:error, %YAML.ArgumentError{option: :schema, value: :yaml12}} =
+               YAML.decode("a: 1", schema: :yaml12)
     end
 
     test "returns error for invalid :return option", %{yaml: yaml} do
@@ -1256,15 +1311,7 @@ defmodule YAMLTest do
                    "name" => "node_4",
                    "critical" => false,
                    "timeout" => 100,
-                   # NOTE: Yamerl parser limitation - when multiple << keys appear in sequence:
-                   #   <<: *service_y
-                   #   <<: *service_x
-                   # Yamerl only processes the last << key (*service_x) and ignores the rest.
-                   # This means keys from service_y (like "elixir") won't be included, but
-                   # keys from service_x (like "javascript") will be present in the merged result.
-                   #
-                   # Workaround: Use array syntax instead: <<: [*service_x, *service_y]
-                   # "elixir" => "phoenix",
+                   "elixir" => "phoenix",
                    "javascript" => "nodejs"
                  },
                  "node_5" => %{
@@ -1676,13 +1723,13 @@ defmodule YAMLTest do
       assert {3, _column} = error.location
     end
 
-    test "yields an error for a document that crashes yamerl and keeps going" do
+    test "yields an error for an unclosed flow map and keeps going" do
       assert [{:error, %YAML.ParsingError{}}, {:ok, %{"b" => 1}}] =
                ["d: {x\n---\nb: 1\n"] |> YAML.decode_stream() |> Enum.to_list()
     end
 
     test "a --- line in a quoted string ends the document, per the YAML spec" do
-      assert [{:error, %YAML.ParsingError{location: {2, 1}}}, {:ok, "y\""}] =
+      assert [{:error, %YAML.ParsingError{location: {1, 4}}}, {:ok, "y\""}] =
                [~s(a: "x\n---\ny")] |> YAML.decode_stream() |> Enum.to_list()
     end
 
@@ -1761,7 +1808,7 @@ defmodule YAMLTest do
       for opts <- [
             [atomize_keys: true],
             [enable_merge: false],
-            [yamerl_opts: [schema: :yaml11]],
+            [schema: :yaml11],
             [detailed: true]
           ] do
         assert stream(yaml, opts) == YAML.decode!(yaml, [return: :all_documents] ++ opts)

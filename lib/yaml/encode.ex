@@ -96,7 +96,8 @@ defmodule YAML.Encode do
 
   # Adds the map key to the location of an error from inside the value
   defp data_pair({key, value}, map, level, line_indent, sort) when is_scalar_key(key) do
-    written_key = write_scalar(key_text(key, map))
+    text = key_text(key, map)
+    written_key = write_scalar(text)
 
     written =
       try do
@@ -106,7 +107,7 @@ defmodule YAML.Encode do
           fail(EncodeError.prepend_location(error, key))
       end
 
-    [line_indent, written_key, ?: | written]
+    pair_line(text, written_key, written, level, line_indent)
   end
 
   # Map and list keys use the explicit "? key" form, with the value on the ":" line
@@ -125,6 +126,13 @@ defmodule YAML.Encode do
 
   defp data_pair({key, _value}, _map, _level, _line_indent, _sort),
     do: fail(EncodeError.invalid_key(key, type_name(key)))
+
+  # The parser reads a plain "key:" of up to 1024 characters, so a longer one uses "? key"
+  defp pair_line(text, written_key, written, level, line_indent) do
+    if is_binary(text) and byte_size(text) > 255 and IO.iodata_length(written_key) > 1024,
+      do: [line_indent, "? ", written_key, ?\n, indent(level), ?: | written],
+      else: [line_indent, written_key, ?: | written]
+  end
 
   # A key written as text would repeat a string key with the same text
   defp key_text(key, map) do
@@ -240,7 +248,8 @@ defmodule YAML.Encode do
 
   defp ast_pair({%Scalar{value: key_value}, value}, level, line_indent)
        when is_scalar_key(key_value) do
-    written_key = write_scalar(as_text(key_value))
+    text = as_text(key_value)
+    written_key = write_scalar(text)
 
     written =
       try do
@@ -250,7 +259,7 @@ defmodule YAML.Encode do
           fail(EncodeError.prepend_location(error, key_value))
       end
 
-    [line_indent, written_key, ?: | written]
+    pair_line(text, written_key, written, level, line_indent)
   end
 
   defp ast_pair({%type{} = key, value}, level, line_indent) when type in [List, Mapping] do

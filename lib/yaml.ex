@@ -12,14 +12,7 @@ defmodule YAML do
   alias YAML.ParsingError
   alias YAML.AST.{Document, Scalar, List, Mapping, Meta}
 
-  @valid_yamerl_opts [
-    :schema,
-    :node_mods,
-    :keep_duplicate_keys
-  ]
-
   @valid_schema_values [:failsafe, :json, :core, :yaml11]
-  @valid_map_node_format_values [:map, :proplist]
 
   @doc """
    Decodes YAML strings into Elixir data structures or AST.
@@ -55,13 +48,7 @@ defmodule YAML do
       default value is the template for its value, so `%User{address: %Address{}}` decodes
       nested structs. Not supported with `detailed: true`.
 
-    * `:yamerl_opts` - list of additional options passed directly to `:yamerl_constr`
-      (default: `[]`). Note: `:str_node_as_binary` and `:detailed_constr` are always
-      set internally and should not be passed here.
-
-        * `{:schema, :failsafe | :json | :core | :yaml11}` - YAML schema for type resolution (default: `:core`)
-        * `{:node_mods, [module()]}` - extra modules for custom node types (default: `[]`)
-        * `{:keep_duplicate_keys, boolean()}` - preserve duplicate map keys (default: `false`)
+    * `:schema` - how plain scalars are typed: `:core`, `:yaml11`, `:json` or `:failsafe` (default: `:core`)
 
   ## Examples
 
@@ -74,8 +61,8 @@ defmodule YAML do
       iex> YAML.decode("a: 1", return: :first_document)
       {:ok, %{"a" => 1}}
 
-      iex> YAML.decode("a: 1", yamerl_opts: [{:schema, :core}, {:map_node_format, :map}])
-      {:ok, %{"a" => 1}}
+      iex> YAML.decode("a: yes", schema: :yaml11)
+      {:ok, %{"a" => true}}
 
       iex> YAML.decode("path: /home\\nport: 80", as: %URI{})
       {:ok, %URI{path: "/home", port: 80}}
@@ -84,8 +71,7 @@ defmodule YAML do
 
   def decode(binary, opts \\ []) when is_binary(binary) do
     with {:ok, opts} <- validate_opts(opts),
-         yamerl_opts = Keyword.get(opts, :yamerl_opts, []),
-         {:ok, yaml} <- Parser.parse(binary, yamerl_opts) do
+         {:ok, yaml} <- Parser.parse(binary, opts[:schema]) do
       {:ok, apply_options(yaml, opts)}
     end
   end
@@ -173,7 +159,7 @@ defmodule YAML do
       # Line numbers start at the document, so they are moved to match the whole stream
       offset = first_line - 1
 
-      case Parser.parse(text, opts[:yamerl_opts]) do
+      case Parser.parse(text, opts[:schema]) do
         {:ok, documents} ->
           documents
           |> shift_lines(offset, opts[:detailed])
@@ -452,7 +438,7 @@ defmodule YAML do
     detailed: false,
     enable_merge: true,
     atomize_keys: false,
-    yamerl_opts: []
+    schema: :core
   ]
 
   defp validate_opts(opts) do
@@ -501,14 +487,17 @@ defmodule YAML do
           {:halt, {:error, error}}
         end
 
-      {:yamerl_opts, v}, {:ok, acc} when is_list(v) ->
-        case validate_yamerl_opts(v) do
-          :ok -> {:cont, {:ok, [{:yamerl_opts, v} | acc]}}
-          {:error, _} = error -> {:halt, error}
-        end
+      {:schema, v} = opt, {:ok, acc} when v in @valid_schema_values ->
+        {:cont, {:ok, [opt | acc]}}
 
-      {:yamerl_opts, v}, {:ok, _acc} ->
-        error = ArgumentError.invalid_option(:yamerl_opts, v, "must be a list")
+      {:schema, v}, {:ok, _acc} ->
+        error =
+          ArgumentError.invalid_option(
+            :schema,
+            v,
+            "must be one of #{inspect(@valid_schema_values)}"
+          )
+
         {:halt, {:error, error}}
 
       {key, val}, {:ok, _acc} ->
@@ -527,60 +516,6 @@ defmodule YAML do
       error ->
         error
     end
-  end
-
-  defp validate_yamerl_opts(yamerl_opts) do
-    Enum.reduce_while(yamerl_opts, :ok, fn
-      {:schema, v}, :ok when v in @valid_schema_values ->
-        {:cont, :ok}
-
-      {:schema, v}, :ok ->
-        error =
-          ArgumentError.invalid_option(
-            :schema,
-            v,
-            "must be one of #{inspect(@valid_schema_values)}"
-          )
-
-        {:halt, {:error, error}}
-
-      {:node_mods, v}, :ok when is_list(v) ->
-        {:cont, :ok}
-
-      {:node_mods, v}, :ok ->
-        error = ArgumentError.invalid_option(:node_mods, v, "must be a list of modules")
-        {:halt, {:error, error}}
-
-      {:map_node_format, v}, :ok when v in @valid_map_node_format_values ->
-        {:cont, :ok}
-
-      {:keep_duplicate_keys, v}, :ok when is_boolean(v) ->
-        {:cont, :ok}
-
-      {:keep_duplicate_keys, v}, :ok ->
-        error = ArgumentError.invalid_option(:keep_duplicate_keys, v, "must be a boolean")
-        {:halt, {:error, error}}
-
-      {key, _}, :ok ->
-        error =
-          ArgumentError.invalid_option(
-            key,
-            nil,
-            "unknown yamerl option. Must be one of #{inspect(@valid_yamerl_opts)}"
-          )
-
-        {:halt, {:error, error}}
-
-      opt, :ok ->
-        error =
-          ArgumentError.invalid_option(
-            opt,
-            nil,
-            "invalid yamerl option, expected a {key, value} tuple"
-          )
-
-        {:halt, {:error, error}}
-    end)
   end
 
   @option_priority %{
@@ -606,7 +541,7 @@ defmodule YAML do
       {:enable_merge, false}, yaml -> yaml
       {:atomize_keys, _}, yaml -> yaml
       {:as, template}, yaml -> Enum.map(yaml, &Decode.as(&1, template))
-      {:yamerl_opts, _}, yaml -> yaml
+      {:schema, _}, yaml -> yaml
     end)
   end
 end

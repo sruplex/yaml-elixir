@@ -3,8 +3,12 @@ defmodule YAML.Parser do
   Parses YAML strings into AST or simplified Elixir data structures.
   """
 
+  alias YAML.Native
   alias YAML.ParsingError
-  alias YAML.AST.{Document, Scalar, List, Mapping, Meta}
+  alias YAML.AST.{Document, Scalar, List, Mapping}
+
+  # Inputs from this size take over a millisecond, so they run on a dirty scheduler
+  @dirty_size 8_000
 
   @doc """
   Parses YAML string into AST (Abstract Syntax Tree) with full metadata.
@@ -27,87 +31,24 @@ defmodule YAML.Parser do
     ]
   """
 
-  def parse(string, yamerl_opts) when is_binary(string) do
-    opts = [:str_node_as_binary, :detailed_constr | yamerl_opts]
+  def parse(string, schema \\ :core) when is_binary(string) do
+    result =
+      if byte_size(string) < @dirty_size,
+        do: Native.parse(string, schema),
+        else: Native.parse_dirty(string, schema)
 
-    try do
-      :yamerl_constr.string(string, opts)
-    rescue
-      # yamerl's parser crashes on some input instead of returning its own error
-      _error ->
-        {:error, %ParsingError{type: :parse_error, message: "yamerl failed to parse the input"}}
-    catch
-      {:yamerl_exception, error} ->
-        {:error, ParsingError.build_error(error)}
-    else
-      documents -> {:ok, do_parse(documents)}
+    case result do
+      {:ok, documents} -> {:ok, documents}
+      {:error, message, line, column} -> {:error, ParsingError.build(message, line, column)}
     end
   end
 
-  def parse!(string, yamerl_opts) when is_binary(string) do
-    case parse(string, yamerl_opts) do
+  def parse!(string, schema \\ :core) when is_binary(string) do
+    case parse(string, schema) do
       {:ok, yaml} -> yaml
       {:error, error} -> raise error
     end
   end
-
-  defp do_parse({:yamerl_doc, root}), do: %Document{root: do_parse(root)}
-
-  defp do_parse({:yamerl_map, _, tag, meta, pairs}) do
-    %Mapping{
-      pairs: Enum.map(pairs, fn {k, v} -> {do_parse(k), do_parse(v)} end),
-      meta: build_meta(tag, meta)
-    }
-  end
-
-  defp do_parse({:yamerl_seq, _, tag, meta, items, doc_count}) do
-    %List{items: Enum.map(items, &do_parse/1), meta: build_meta(tag, meta), length: doc_count}
-  end
-
-  defp do_parse({:yamerl_null, _, tag, meta}) do
-    %Scalar{value: nil, meta: build_meta(tag, meta)}
-  end
-
-  defp do_parse({node_type, _, tag, meta, value})
-       when node_type in [
-              :yamerl_str,
-              :yamerl_int,
-              :yamerl_bool,
-              :yamerl_float,
-              :yamerl_binary,
-              :yamerl_ip_addr
-            ] do
-    %Scalar{value: value, meta: build_meta(tag, meta)}
-  end
-
-  defp do_parse(
-         {:yamerl_timestamp, _data, tag, meta, year, month, day, hour, minute, second, _fraction,
-          _tz}
-       )
-       when is_integer(year) and is_integer(month) and is_integer(day) do
-    meta = build_meta(tag, meta)
-    hour = normalize_integer(hour)
-    minute = normalize_integer(minute)
-    second = normalize_integer(second)
-    datetime = NaiveDateTime.new!(year, month, day, hour, minute, second)
-
-    %Scalar{value: datetime, meta: meta}
-  end
-
-  defp do_parse(yamerl_result) when is_list(yamerl_result) do
-    Enum.map(yamerl_result, &do_parse/1)
-  end
-
-  defp do_parse({_type, _data, _tag, _meta, value}) do
-    %Scalar{value: value, meta: nil}
-  end
-
-  defp build_meta(tag, meta) do
-    %Meta{tag: to_string(tag), line: meta[:line], column: meta[:column]}
-  end
-
-  defp normalize_integer(v) when is_integer(v), do: v
-  defp normalize_integer(_), do: 0
 
   @doc """
   Simplifies AST into plain Elixir data structures (maps, lists).

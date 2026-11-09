@@ -3,8 +3,8 @@ YAML
 
 > YAML Encoding and Decoding in Elixir
 
-This library is a lightweight wrapper around the erlang [`yamerl`][yamerl] package
-and provides a clean and intuitive way to encode and decode YAML in Elixir.
+This library decodes YAML with a fast Rust parser and provides a clean and intuitive
+way to encode and decode YAML in Elixir.
 
 
 
@@ -203,6 +203,12 @@ File.stream!("in.yml")
 |> Stream.run()
 ```
 
+### Performance
+
+Inputs over 8 KB are decoded on a dirty scheduler. If your app decodes many of them at the same
+time, start the VM with `+Mdai max` so they can run in parallel, for example with
+`ELIXIR_ERL_OPTIONS="+Mdai max"` or in `rel/vm.args.eex`.
+
 
 
 ## Roadmap
@@ -213,5 +219,3 @@ File.stream!("in.yml")
  - [x] Streaming
  - [x] Tests
  - [x] CI
-
- [yamerl]: https://github.com/yakaz/yamerl/
