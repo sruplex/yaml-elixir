@@ -201,7 +201,7 @@ defmodule YAML do
     * Atoms are written as strings, except `nil`, `true`, `false`, `:nan`, `:"+inf"` and `:"-inf"`
     * `:nan`, `:"+inf"` and `:"-inf"` are written as `.nan`, `.inf` and `-.inf`
     * Dates and times are written as quoted ISO 8601 strings
-    * Other structs return an error
+    * Other structs are written through `YAML.Encoder`, and return an error without an implementation
 
   ## Examples
 

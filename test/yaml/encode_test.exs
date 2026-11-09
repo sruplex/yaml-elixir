@@ -142,7 +142,7 @@ defmodule YAML.EncodeTest do
             {self(), "pid"},
             {make_ref(), "reference"},
             {&IO.puts/1, "function"},
-            {%URI{}, "URI struct"},
+            {%URI{}, "URI struct without a YAML.Encoder"},
             {<<1::3>>, "bitstring"}
           ] do
         error = encode_error(term)

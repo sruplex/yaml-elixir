@@ -23,6 +23,11 @@ defmodule YAML.Encode do
 
   defguardp is_plain_map(term) when is_map(term) and not is_struct(term)
 
+  # Structs written through YAML.Encoder, since dates and times are written directly
+  defguardp is_encoded_struct(term)
+            when is_struct(term) and not is_struct(term, Date) and not is_struct(term, Time) and
+                   not is_struct(term, NaiveDateTime) and not is_struct(term, DateTime)
+
   # Characters that must be escaped in a double-quoted string
   defguardp is_escaped_byte(c) when c < 0x20 or c == 0x7F
 
@@ -31,16 +36,7 @@ defmodule YAML.Encode do
 
   @spec data(term(), boolean()) :: {:ok, iodata()} | {:error, EncodeError.t()}
   def data(term, sort \\ false) do
-    root =
-      case term do
-        map when map == %{} -> "{}\n"
-        [] -> "[]\n"
-        map when is_plain_map(map) -> data_pairs(map, 0, "", sort)
-        list when is_list(list) -> data_items(list, 0, "", sort)
-        value -> write_value(value, 1)
-      end
-
-    {:ok, ["---\n", root]}
+    {:ok, ["---\n", data_root(term, sort)]}
   catch
     {:encode_error, %EncodeError{} = error} -> {:error, error}
   end
@@ -64,6 +60,26 @@ defmodule YAML.Encode do
 
   # Plain data
   # ----------
+
+  defp data_root(map, _sort) when map == %{}, do: "{}\n"
+  defp data_root([], _sort), do: "[]\n"
+  defp data_root(map, sort) when is_plain_map(map), do: data_pairs(map, 0, "", sort)
+  defp data_root(list, sort) when is_list(list), do: data_items(list, 0, "", sort)
+
+  defp data_root(struct, sort) when is_encoded_struct(struct),
+    do: data_root(encode_struct(struct), sort)
+
+  defp data_root(value, _sort), do: write_value(value, 1)
+
+  # A struct as the data its YAML.Encoder implementation returns
+  defp encode_struct(struct) do
+    YAML.Encoder.encode(struct)
+  rescue
+    error in Protocol.UndefinedError ->
+      if error.protocol == YAML.Encoder and error.value === struct,
+        do: fail(EncodeError.unsupported(struct, "#{type_name(struct)} without a YAML.Encoder")),
+        else: reraise(error, __STACKTRACE__)
+  end
 
   # The first line takes `first_indent`, so it can follow "- " on the same line
   defp data_pairs(map, level, first_indent, sort) do
@@ -167,6 +183,9 @@ defmodule YAML.Encode do
   defp data_value(list, level, sort) when is_list(list),
     do: [?\n | data_items(list, level, indent(level), sort)]
 
+  defp data_value(struct, level, sort) when is_encoded_struct(struct),
+    do: data_value(encode_struct(struct), level, sort)
+
   defp data_value(value, level, _sort), do: [?\s | write_value(value, level)]
 
   # Everything after "- " starts on the same line
@@ -178,6 +197,9 @@ defmodule YAML.Encode do
 
   defp data_item_value(list, level, sort) when is_list(list),
     do: data_items(list, level, "", sort)
+
+  defp data_item_value(struct, level, sort) when is_encoded_struct(struct),
+    do: data_item_value(encode_struct(struct), level, sort)
 
   defp data_item_value(value, level, _sort), do: write_value(value, level)
 
@@ -490,6 +512,7 @@ defmodule YAML.Encode do
     do: [?{, flow_pairs(map_pairs(map, sort), map, sort), ?}]
 
   defp flow(list, sort) when is_list(list), do: [?[, flow_items(list, 0, sort), ?]]
+  defp flow(struct, sort) when is_encoded_struct(struct), do: flow(encode_struct(struct), sort)
 
   defp flow(value, _sort) do
     case as_text(value) do
