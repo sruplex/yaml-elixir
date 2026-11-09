@@ -1425,7 +1425,10 @@ defmodule YAMLTest do
       assert {:ok, document} = YAML.decode("a: 1", detailed: true)
 
       assert {:error,
-              %YAML.EncodeError{message: "cannot encode YAML.AST.Document struct", location: [1]}} =
+              %YAML.EncodeError{
+                message: "cannot encode YAML.AST.Document struct without a YAML.Encoder",
+                location: [1]
+              }} =
                YAML.encode([1, document])
     end
 
@@ -1616,9 +1619,11 @@ defmodule YAMLTest do
       assert {:ok, document} = YAML.decode("a: 1", detailed: true)
       stream = YAML.encode_stream!([[document]])
 
-      assert_raise YAML.EncodeError, "cannot encode YAML.AST.Document struct (at [0, 0])", fn ->
-        Stream.run(stream)
-      end
+      assert_raise YAML.EncodeError,
+                   "cannot encode YAML.AST.Document struct without a YAML.Encoder (at [0, 0])",
+                   fn ->
+                     Stream.run(stream)
+                   end
     end
 
     test "raises on unknown options before encoding" do

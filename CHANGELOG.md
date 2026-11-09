@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- `YAML.Encoder` protocol to encode structs, with `@derive` and its `:only` and `:except` options.
+
 ## v0.3.0 (2026-11-09)
 
 ### Breaking

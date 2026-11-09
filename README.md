@@ -162,6 +162,18 @@ tax: 251.42
 total: 4443.52
 ```
 
+To encode your own structs, derive or implement `YAML.Encoder`:
+
+```elixir
+defmodule User do
+  @derive {YAML.Encoder, only: [:name, :email]}
+  defstruct [:name, :email, :password]
+end
+
+YAML.encode(%User{name: "Ada", email: "ada@example.com", password: "secret"})
+# {:ok, "---\nname: Ada\nemail: ada@example.com\n"}
+```
+
 ### Streaming
 
 To read or write large files one document at a time, use
