@@ -5,6 +5,7 @@
 ### Added
 
 - `YAML.Encoder` protocol to encode structs, with `@derive` and its `:only` and `:except` options.
+- `:as` decode option to decode into structs, and a `YAML.Decoder` protocol to decode other data into a struct.
 
 ## v0.3.0 (2026-11-09)
 
