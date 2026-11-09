@@ -5,9 +5,11 @@ defmodule YAML do
   alias YAML.Parser
   alias YAML.Merge
   alias YAML.Encode
+  alias YAML.Splitter
   alias YAML.ArgumentError
   alias YAML.EncodeError
-  alias YAML.AST.Document
+  alias YAML.ParsingError
+  alias YAML.AST.{Document, Scalar, List, Mapping, Meta}
 
   @valid_yamerl_opts [
     :schema,
@@ -85,6 +87,107 @@ defmodule YAML do
       {:error, error} -> raise error
     end
   end
+
+  @doc """
+  Lazily decodes a stream of YAML text, such as `File.stream!/1`, one document at a time,
+  yielding `{:ok, document}` or `{:error, error}` for each. Takes the same options as
+  `decode/2`, except `:return`. Raises `YAML.ArgumentError` on invalid options.
+
+  A document is yielded once the next `---` or `...` line, or the end of the input, is read.
+
+  ## Examples
+
+      iex> stream = YAML.decode_stream(["a: 1\\n---\\n", "b: [1\\n---\\n", "c: 3\\n"])
+      iex> Enum.map(stream, &elem(&1, 0))
+      [:ok, :error, :ok]
+
+  """
+  @spec decode_stream(Enumerable.t(), keyword()) ::
+          Enumerable.t({:ok, term()} | {:error, ParsingError.t()})
+  def decode_stream(enumerable, opts \\ []) when is_list(opts) do
+    if Keyword.has_key?(opts, :return) do
+      raise ArgumentError.invalid_option(
+              :return,
+              opts[:return],
+              "is not supported when streaming"
+            )
+    end
+
+    opts =
+      case validate_opts(opts) do
+        {:ok, opts} -> Keyword.put(opts, :return, :all_documents)
+        {:error, error} -> raise error
+      end
+
+    enumerable
+    |> Splitter.split()
+    |> Stream.flat_map(fn {text, first_line} ->
+      # Line numbers start at the document, so they are moved to match the whole stream
+      offset = first_line - 1
+
+      case Parser.parse(text, opts[:yamerl_opts]) do
+        {:ok, documents} ->
+          documents
+          |> shift_lines(offset, opts[:detailed])
+          |> apply_options(opts)
+          |> Enum.map(&{:ok, &1})
+
+        {:error, error} ->
+          [{:error, shift_error(error, offset)}]
+      end
+    end)
+  end
+
+  @doc """
+  Same as `decode_stream/2`, but yields documents and raises on error.
+
+  ## Examples
+
+      iex> ["a: 1\\n", "---\\n", "b: 2\\n"] |> YAML.decode_stream!() |> Enum.to_list()
+      [%{"a" => 1}, %{"b" => 2}]
+
+  """
+  @spec decode_stream!(Enumerable.t(), keyword()) :: Enumerable.t(term())
+  def decode_stream!(enumerable, opts \\ []) when is_list(opts) do
+    enumerable
+    |> decode_stream(opts)
+    |> Stream.map(fn
+      {:ok, document} -> document
+      {:error, error} -> raise error
+    end)
+  end
+
+  defp shift_lines(documents, 0, _detailed), do: documents
+  defp shift_lines(documents, _offset, false), do: documents
+  defp shift_lines(documents, offset, true), do: Enum.map(documents, &shift_node(&1, offset))
+
+  defp shift_node(%Document{root: root} = document, offset),
+    do: %{document | root: shift_node(root, offset)}
+
+  defp shift_node(%Mapping{pairs: pairs, meta: meta} = node, offset) do
+    pairs =
+      Enum.map(pairs, fn {key, value} -> {shift_node(key, offset), shift_node(value, offset)} end)
+
+    %{node | pairs: pairs, meta: shift_meta(meta, offset)}
+  end
+
+  defp shift_node(%List{items: items, meta: meta} = node, offset),
+    do: %{node | items: Enum.map(items, &shift_node(&1, offset)), meta: shift_meta(meta, offset)}
+
+  defp shift_node(%Scalar{meta: meta} = node, offset),
+    do: %{node | meta: shift_meta(meta, offset)}
+
+  defp shift_node(node, _offset), do: node
+
+  defp shift_meta(%Meta{line: line} = meta, offset) when is_integer(line),
+    do: %{meta | line: line + offset}
+
+  defp shift_meta(meta, _offset), do: meta
+
+  defp shift_error(%ParsingError{location: {line, column}} = error, offset) when is_integer(line),
+    do: %{error | location: {line + offset, column}}
+
+  defp shift_error(error, _offset), do: error
 
   @doc """
   Encodes Elixir data, a YAML AST document or a list of documents into YAML.
@@ -175,6 +278,69 @@ defmodule YAML do
       {:ok, iodata} -> iodata
       {:error, error} -> raise error
     end
+  end
+
+  @doc """
+  Lazily encodes each item of an enumerable as one YAML document, yielding
+  `{:ok, iodata}` or `{:error, error}` for each. Raises `YAML.ArgumentError` on invalid options.
+
+  ## Examples
+
+      iex> [%{"a" => 1}, {1, 2}] |> YAML.encode_stream() |> Enum.map(&elem(&1, 0))
+      [:ok, :error]
+
+  """
+  @spec encode_stream(Enumerable.t(), keyword()) ::
+          Enumerable.t({:ok, iodata()} | {:error, EncodeError.t()})
+  def encode_stream(enumerable, opts \\ []) when is_list(opts) do
+    sort =
+      case validate_encode_opts(opts, false) do
+        {:ok, sort} -> sort
+        {:error, error} -> raise error
+      end
+
+    enumerable
+    |> Stream.with_index()
+    |> Stream.map(fn {item, index} ->
+      written =
+        case item do
+          %Document{} -> Encode.document(item)
+          _ -> Encode.data(item, sort)
+        end
+
+      # Adds the item's index to the location of its error
+      case written do
+        {:error, error} -> {:error, EncodeError.prepend_location(error, index)}
+        ok -> ok
+      end
+    end)
+  end
+
+  @doc """
+  Same as `encode_stream/2`, but yields iodata and raises on error.
+
+  ## Examples
+
+      iex> stream = YAML.encode_stream!([%{"a" => 1}, [1, 2]])
+      iex> stream |> Enum.to_list() |> IO.iodata_to_binary()
+      "---\\na: 1\\n---\\n- 1\\n- 2\\n"
+
+  To write a file:
+
+      data
+      |> YAML.encode_stream!()
+      |> Stream.into(File.stream!("out.yml", [:delayed_write]))
+      |> Stream.run()
+
+  """
+  @spec encode_stream!(Enumerable.t(), keyword()) :: Enumerable.t(iodata())
+  def encode_stream!(enumerable, opts \\ []) when is_list(opts) do
+    enumerable
+    |> encode_stream(opts)
+    |> Stream.map(fn
+      {:ok, iodata} -> iodata
+      {:error, error} -> raise error
+    end)
   end
 
   # Returns the :sort_maps value, the only encode option

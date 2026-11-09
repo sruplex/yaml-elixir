@@ -1,8 +1,16 @@
 defmodule YAML.ParsingError do
   defexception [:message, :location, :type]
 
+  @type t :: %__MODULE__{
+          message: String.t(),
+          location: {pos_integer(), pos_integer()} | nil,
+          type: atom()
+        }
+
   # Exception Callbacks
   # -------------------
+
+  def message(%{location: nil} = error), do: error.message
 
   def message(error) do
     "#{error.message} (at #{inspect(error.location)})"
