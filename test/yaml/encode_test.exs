@@ -306,4 +306,272 @@ defmodule YAML.EncodeTest do
       end
     end
   end
+
+  describe "maps" do
+    test "writes flat and nested maps" do
+      assert emit(%{"a" => 1, "b" => "x"}) == "a: 1\nb: x\n"
+      assert emit(%{"a" => %{"b" => %{"c" => nil}}}) == "a:\n  b:\n    c: null\n"
+      assert emit(%{"a" => %{"b" => 1}, "c" => 2}) == "a:\n  b: 1\nc: 2\n"
+    end
+
+    test "writes empty values and an empty top-level map" do
+      assert emit(%{"a" => %{}, "b" => []}) == "a: {}\nb: []\n"
+      assert emit(%{}) == "{}"
+    end
+
+    test "keys use the string rules" do
+      assert emit(%{"a: b" => 1}) == ~s("a: b": 1\n)
+      assert emit(%{"yes" => 1}) == ~s("yes": 1\n)
+      assert emit(%{1 => "x"}) == "1: x\n"
+      assert emit(%{nil => "x"}) == "null: x\n"
+    end
+
+    test "a \"<<\" key is quoted" do
+      value = %{"<<" => %{"a" => 1}, "b" => 2}
+      assert emit(value) == ~s("<<":\n  a: 1\nb: 2\n)
+      assert emit(%{"<<": 1}) == ~s("<<": 1\n)
+      assert emit(["<<"]) == ~s(- "<<"\n)
+
+      assert YAML.decode(emit(value), enable_merge: false, return: :first_document) ==
+               {:ok, value}
+    end
+
+    test "errors from nested values report their location" do
+      for {value, location} <- [
+            {%{"a" => [%{"b" => <<255>>}]}, ["a", 0, "b"]},
+            {%{"files" => [<<1>>, <<0xFF>>]}, ["files", 1]},
+            {%{"a" => %{<<255>> => 1}}, ["a"]}
+          ] do
+        assert {:error, %EncodeError{location: ^location} = error} = Encode.data(value)
+
+        assert Exception.message(error) ==
+                 "cannot encode invalid UTF-8 string (at #{inspect(location)})"
+      end
+    end
+
+    test "an invalid string at the top has no location" do
+      assert {:error, %EncodeError{location: []}} = Encode.data(<<255>>)
+    end
+
+    test "strings, atoms, numbers, nil, booleans and dates are allowed as keys" do
+      for {key, yaml} <- [
+            {"a", "a: 1\n"},
+            {:a, "a: 1\n"},
+            {1, "1: 1\n"},
+            {1.5, "1.5: 1\n"},
+            {nil, "null: 1\n"},
+            {true, "true: 1\n"},
+            {~D[2026-01-02], ~s("2026-01-02": 1\n)}
+          ] do
+        assert emit(%{key => 1}) == yaml
+      end
+    end
+
+    test "an atom key and a string key with the same text return a duplicate_key error" do
+      assert {:error, %EncodeError{} = error} =
+               Encode.data(%{"user" => %{:name => 1, "name" => 2}})
+
+      assert error.type == :duplicate_key
+      assert error.term == :name
+      assert error.location == ["user"]
+      assert Exception.message(error) == ~s{duplicate map key "name" (at ["user"])}
+    end
+
+    test "keys that are written differently are not duplicates" do
+      value = %{
+        :a => 1,
+        "b" => 2,
+        1 => 3,
+        "1" => 4,
+        nil => 5,
+        "null" => 6,
+        true => 7,
+        "true" => 8
+      }
+
+      for schema <- [:core, :yaml11] do
+        assert decode(emit(value), schema) ==
+                 {:ok,
+                  %{
+                    "a" => 1,
+                    "b" => 2,
+                    1 => 3,
+                    "1" => 4,
+                    nil => 5,
+                    "null" => 6,
+                    true => 7,
+                    "true" => 8
+                  }}
+      end
+    end
+
+    test "other keys return an invalid_key error" do
+      for {key, type} <- [{{1, 2}, "tuple"}, {self(), "pid"}, {URI.parse("x"), "URI struct"}] do
+        assert {:error, %EncodeError{} = error} = Encode.data(%{key => 1})
+        assert error.type == :invalid_key
+        assert error.term == key
+        assert error.message == "cannot encode #{type} as a map key"
+      end
+    end
+
+    test "map and list keys use the explicit \"? key\" form" do
+      for {value, yaml} <- [
+            {%{["a", "b"] => 1}, "? - a\n  - b\n: 1\n"},
+            {%{%{"a" => 1} => [2]}, "? a: 1\n:\n  - 2\n"},
+            {%{[] => 1, %{} => 2}, "? {}\n: 2\n? []\n: 1\n"},
+            {[%{["a"] => 1, "b" => 2}], "- ? - a\n  : 1\n  b: 2\n"},
+            {%{"x" => %{[1] => %{"z" => 2}}}, "x:\n  ? - 1\n  :\n    z: 2\n"}
+          ] do
+        assert emit(value) == yaml
+        assert YAML.decode(yaml, return: :first_document) == {:ok, value}
+      end
+    end
+
+    test "a map key that starts with a \"? key\" is written in flow style" do
+      for {value, yaml} <- [
+            {%{%{[1] => 2} => 3}, "? {[1]: 2}\n: 3\n"},
+            {%{%{%{"a" => 1} => "b,c"} => [1]}, ~s(? {{"a": 1}: "b,c"}\n:\n  - 1\n)},
+            {%{%{[] => %{}, "a" => [nil, 1.5]} => 1}, ~s(? {[]: {}, "a": [null, 1.5]}\n: 1\n)},
+            {%{"x" => [%{%{["<<"] => "y"} => 1}]}, ~s(x:\n  - ? {["<<"]: "y"}\n    : 1\n)}
+          ] do
+        assert emit(value) == yaml
+        assert decode(yaml, :core) == {:ok, value}
+      end
+    end
+
+    test "a map key that starts with a plain key keeps the block form" do
+      assert emit(%{%{1 => 1, [1] => 2} => 3}) == "? 1: 1\n  ? - 1\n  : 2\n: 3\n"
+    end
+
+    test "errors inside a map or list key start with that key" do
+      for {value, location} <- [
+            {%{["k", <<255>>] => 1}, [["k", <<255>>], 1]},
+            {%{"a" => %{%{"b" => {1}} => 1}}, ["a", %{"b" => {1}}, "b"]},
+            {%{%{[1] => {1}} => 1}, [%{[1] => {1}}, [1]]}
+          ] do
+        assert {:error, %EncodeError{location: ^location}} = Encode.data(value)
+      end
+    end
+
+    test "nested errors are returned with their location" do
+      assert {:error, %EncodeError{term: {1}, location: ["a", 1, "b"]} = error} =
+               Encode.data(%{"a" => [1, %{"b" => {1}}]})
+
+      assert Exception.message(error) == ~s{cannot encode tuple (at ["a", 1, "b"])}
+    end
+
+    test "a bad key is reported before a bad value" do
+      assert {:error, %EncodeError{type: :invalid_utf8, location: []}} =
+               Encode.data(%{<<255>> => {1}})
+    end
+
+    test "infinity and NaN atom keys are not duplicates of their names" do
+      value = %{:"+inf" => 1, "+inf" => 2, :nan => 3, "nan" => 4}
+      assert decode(emit(value), :core) == {:ok, value}
+    end
+
+    test "a date or time key and a string key with the same text return a duplicate_key error" do
+      for key <- [~D[2026-01-02], ~T[10:00:00], ~N[2026-01-02 10:00:00], ~U[2026-01-02 10:00:00Z]] do
+        text = to_string(key) |> String.replace(" ", "T")
+
+        assert {:error, %EncodeError{type: :duplicate_key, term: ^key}} =
+                 Encode.data(%{key => 1, text => 2})
+      end
+    end
+
+    test "a bad key's location is the map that holds it" do
+      assert {:error, %EncodeError{type: :invalid_key, term: {1}, location: ["a"]}} =
+               Encode.data(%{"a" => %{{1} => 2}})
+    end
+  end
+
+  describe "AST" do
+    test "decoded maps and lists are written back" do
+      for yaml <- [
+            "a:\n  b: 1\n  c:\n    - x\n    - z\n",
+            "- a: 1\n  b: 2\n- - 1\n  - 2\n",
+            "a: {}\nb: []\n"
+          ] do
+        assert emit_decoded(yaml) == yaml
+      end
+    end
+
+    test "map and list keys in an AST use the explicit \"? key\" form" do
+      yaml = "? - a\n: 1\n? b: 2\n: 3\n"
+      {:ok, [%{root: node}]} = YAML.Parser.parse(yaml, [])
+      assert IO.iodata_to_binary(elem(Encode.node(node), 1)) == yaml
+    end
+
+    test "a map key in an AST that starts with a \"? key\" is written in flow style" do
+      {:ok, [%{root: node}]} = YAML.Parser.parse("? {[1]: 2}\n: 3\n", [])
+      assert IO.iodata_to_binary(elem(Encode.node(node), 1)) == "? {[1]: 2}\n: 3\n"
+    end
+  end
+
+  describe "lists" do
+    test "writes flat and nested lists" do
+      assert emit([1, "a"]) == "- 1\n- a\n"
+      assert emit([[1, 2], 3]) == "- - 1\n  - 2\n- 3\n"
+      assert emit([[[[1]]]]) == "- - - - 1\n"
+    end
+
+    test "writes empty items and an empty top-level list" do
+      assert emit([%{}, []]) == "- {}\n- []\n"
+      assert emit([]) == "[]"
+    end
+
+    test "a list under a key is indented" do
+      assert emit(%{"tags" => ["a", "b"]}) == "tags:\n  - a\n  - b\n"
+    end
+
+    test "a map in a list starts on the dash line" do
+      assert emit([%{"name" => "a", "port" => 80}, %{"name" => "b"}]) ==
+               "- name: a\n  port: 80\n- name: b\n"
+    end
+
+    test "writes mixed nesting" do
+      assert emit(%{"a" => [%{"b" => [1, %{"c" => "x"}]}, ["z"]]}) ==
+               "a:\n  - b:\n      - 1\n      - c: x\n  - - z\n"
+    end
+  end
+
+  describe "indentation" do
+    test "writes deeply nested single-item lists" do
+      value = Enum.reduce(1..50_000, "leaf", fn _, acc -> [acc] end)
+      assert emit(value) == String.duplicate("- ", 50_000) <> "leaf\n"
+    end
+
+    test "writes nesting deeper than the precomputed levels" do
+      deep = Enum.reduce(1..40, "leaf", fn i, acc -> %{"k#{i}" => acc} end)
+      lines = deep |> emit() |> String.split("\n", trim: true)
+
+      assert length(lines) == 40
+      assert Enum.at(lines, -1) == String.duplicate("  ", 39) <> "k1: leaf"
+    end
+
+    test "writes lists nested deeper than the precomputed levels" do
+      deep = Enum.reduce(1..40, 1, fn i, acc -> [%{"k#{i}" => acc, "z" => i}] end)
+
+      for schema <- [:core, :yaml11] do
+        assert decode(emit(deep), schema) == {:ok, deep}
+      end
+    end
+  end
+
+  describe "maps and lists round trip" do
+    test "maps and lists decode back unchanged in both schemas" do
+      values = [
+        %{"a" => 1, "b" => %{"c" => [1, 2]}},
+        [%{"name" => "a", "ports" => [80, 443]}, [], %{}],
+        %{"servers" => [%{"env" => %{"k" => "v"}, "host" => "x"}], "empty" => [[], [[]]]},
+        %{"a" => [%{"b" => [1, %{"c" => "x"}]}, ["y"]]},
+        %{1 => "a", 1.5 => "b", true => "c", nil => "d"},
+        %{"" => 1, "a: b" => 2, "a:" => 3, "#x" => 4}
+      ]
+
+      for value <- values, schema <- [:core, :yaml11] do
+        assert decode(emit(value), schema) == {:ok, value}
+      end
+    end
+  end
 end
