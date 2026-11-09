@@ -101,14 +101,32 @@ YAML.decode(string)
 # }}
 ```
 
+To encode Elixir data, call `YAML.encode/2`:
+
+```elixir
+YAML.encode(%{"name" => "app", "ports" => [80, 443]})
+# {:ok, "---\nname: app\nports:\n  - 80\n  - 443\n"}
+```
+
+To read or write large files one document at a time, use
+`YAML.decode_stream/2` and `YAML.encode_stream/2`:
+
+```elixir
+File.stream!("in.yml")
+|> YAML.decode_stream!()
+|> YAML.encode_stream!()
+|> Stream.into(File.stream!("out.yml"))
+|> Stream.run()
+```
+
 
 
 ## Roadmap
 
  - [x] Decoder
      - [x] Multiple docs
- - [ ] Encoder
- - [ ] Streaming
+ - [x] Encoder
+ - [x] Streaming
  - [x] Tests
  - [x] CI
 
