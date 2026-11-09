@@ -5,6 +5,7 @@ defmodule YAML do
   alias YAML.Parser
   alias YAML.Merge
   alias YAML.Encode
+  alias YAML.Decode
   alias YAML.Splitter
   alias YAML.ArgumentError
   alias YAML.EncodeError
@@ -49,6 +50,11 @@ defmodule YAML do
         * `:safe` - converts keys to atoms only if the atom already exists in the atom table
         * `true` - converts all keys to atoms (only use for trusted input)
 
+    * `:as` - decodes each document into a struct, such as `%User{}`, or `[%User{}]` for a list.
+      Keys are matched to the struct's fields, and unknown keys are ignored. A field's
+      default value is the template for its value, so `%User{address: %Address{}}` decodes
+      nested structs. Not supported with `detailed: true`.
+
     * `:yamerl_opts` - list of additional options passed directly to `:yamerl_constr`
       (default: `[]`). Note: `:str_node_as_binary` and `:detailed_constr` are always
       set internally and should not be passed here.
@@ -70,6 +76,9 @@ defmodule YAML do
 
       iex> YAML.decode("a: 1", yamerl_opts: [{:schema, :core}, {:map_node_format, :map}])
       {:ok, %{"a" => 1}}
+
+      iex> YAML.decode("path: /home\\nport: 80", as: %URI{})
+      {:ok, %URI{path: "/home", port: 80}}
 
   """
 
@@ -404,6 +413,14 @@ defmodule YAML do
         error = ArgumentError.invalid_option(:atomize_keys, v, "must be a boolean or :safe")
         {:halt, {:error, error}}
 
+      {:as, v} = opt, {:ok, acc} ->
+        if Decode.template?(v) do
+          {:cont, {:ok, [opt | acc]}}
+        else
+          error = ArgumentError.invalid_option(:as, v, "must be a struct or a list of one struct")
+          {:halt, {:error, error}}
+        end
+
       {:yamerl_opts, v}, {:ok, acc} when is_list(v) ->
         case validate_yamerl_opts(v) do
           :ok -> {:cont, {:ok, [{:yamerl_opts, v} | acc]}}
@@ -418,6 +435,18 @@ defmodule YAML do
         error = ArgumentError.invalid_option(key, val, "unknown option #{inspect(key)}")
         {:halt, {:error, error}}
     end)
+    |> case do
+      {:ok, valid} ->
+        if valid[:detailed] and Keyword.has_key?(valid, :as) do
+          {:error,
+           ArgumentError.invalid_option(:as, valid[:as], "is not supported with detailed: true")}
+        else
+          {:ok, valid}
+        end
+
+      error ->
+        error
+    end
   end
 
   defp validate_yamerl_opts(yamerl_opts) do
@@ -477,7 +506,8 @@ defmodule YAML do
   @option_priority %{
     enable_merge: 1,
     detailed: 2,
-    return: 3
+    as: 3,
+    return: 4
   }
 
   defp apply_options(yaml, opts) do
@@ -495,6 +525,7 @@ defmodule YAML do
       {:enable_merge, true}, yaml -> Merge.apply(yaml)
       {:enable_merge, false}, yaml -> yaml
       {:atomize_keys, _}, yaml -> yaml
+      {:as, template}, yaml -> Enum.map(yaml, &Decode.as(&1, template))
       {:yamerl_opts, _}, yaml -> yaml
     end)
   end

@@ -174,6 +174,13 @@ YAML.encode(%User{name: "Ada", email: "ada@example.com", password: "secret"})
 # {:ok, "---\nname: Ada\nemail: ada@example.com\n"}
 ```
 
+To decode into your own structs, use the `:as` option:
+
+```elixir
+YAML.decode("name: Ada\nemail: ada@example.com", as: %User{})
+# {:ok, %User{name: "Ada", email: "ada@example.com", password: nil}}
+```
+
 ### Streaming
 
 To read or write large files one document at a time, use

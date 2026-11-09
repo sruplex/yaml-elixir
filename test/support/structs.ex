@@ -23,6 +23,19 @@ defmodule YAML.Support.Money do
   defimpl YAML.Encoder do
     def encode(%{amount: amount, currency: currency}), do: "#{amount} #{currency}"
   end
+
+  defimpl YAML.Decoder do
+    def decode(_template, text) when is_binary(text) do
+      [amount, currency] = String.split(text, " ")
+      %YAML.Support.Money{amount: amount, currency: currency}
+    end
+  end
+end
+
+defmodule YAML.Support.Order do
+  @moduledoc false
+  @derive YAML.Encoder
+  defstruct id: nil, price: %YAML.Support.Money{}
 end
 
 defmodule YAML.Support.Box do
@@ -41,4 +54,10 @@ defmodule YAML.Support.Broken do
   defimpl YAML.Encoder do
     def encode(_value), do: Enum.to_list(%URI{})
   end
+end
+
+defmodule YAML.Support.Team do
+  @moduledoc false
+  @derive YAML.Encoder
+  defstruct name: nil, lead: %YAML.Support.User{}, members: [%YAML.Support.User{}]
 end
