@@ -22,6 +22,8 @@ end
 
 ## Usage
 
+### Decoding
+
 To decode YAML, call the `YAML.decode/1` method:
 
 ```elixir
@@ -101,14 +103,86 @@ YAML.decode(string)
 # }}
 ```
 
+### Encoding
+
+To encode Elixir data, call the `YAML.encode/2` method:
+
+```elixir
+data = %{
+  "invoice" => 34843,
+  "date" => "2001-01-23",
+  "bill-to" => %{
+    "given" => "Chris",
+    "family" => "Dumars",
+    "address" => %{
+      "lines" => "458 Walkman Dr.\nSuite #292\n",
+      "city" => "Royal Oak",
+      "state" => "MI",
+      "postal" => 48046
+    }
+  },
+  "product" => [
+    %{"sku" => "BL394D", "quantity" => 4, "description" => "Basketball", "price" => 450.0},
+    %{"sku" => "BL4438H", "quantity" => 1, "description" => "Super Hoop", "price" => 2392.0}
+  ],
+  "tax" => 251.42,
+  "total" => 4443.52,
+  "comments" => "Late afternoon is best. Backup contact is Nancy Billsmer @ 338-4338.\n"
+}
+
+{:ok, yaml} = YAML.encode(data)
+IO.puts(yaml)
+```
+
+```yaml
+---
+bill-to:
+  address:
+    city: Royal Oak
+    lines: |
+      458 Walkman Dr.
+      Suite #292
+    postal: 48046
+    state: MI
+  family: Dumars
+  given: Chris
+comments: "Late afternoon is best. Backup contact is Nancy Billsmer @ 338-4338.\n"
+date: "2001-01-23"
+invoice: 34843
+product:
+  - description: Basketball
+    price: 450.0
+    quantity: 4
+    sku: BL394D
+  - description: Super Hoop
+    price: 2392.0
+    quantity: 1
+    sku: BL4438H
+tax: 251.42
+total: 4443.52
+```
+
+### Streaming
+
+To read or write large files one document at a time, use
+`YAML.decode_stream/2` and `YAML.encode_stream/2`:
+
+```elixir
+File.stream!("in.yml")
+|> YAML.decode_stream!()
+|> YAML.encode_stream!()
+|> Stream.into(File.stream!("out.yml"))
+|> Stream.run()
+```
+
 
 
 ## Roadmap
 
  - [x] Decoder
      - [x] Multiple docs
- - [ ] Encoder
- - [ ] Streaming
+ - [x] Encoder
+ - [x] Streaming
  - [x] Tests
  - [x] CI
 
