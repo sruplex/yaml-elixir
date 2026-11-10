@@ -184,6 +184,13 @@ YAML.decode("name: Ada\nemail: ada@example.com", as: %User{})
 # {:ok, %User{name: "Ada", email: "ada@example.com", password: nil}}
 ```
 
+To decode custom tags such as `!money`, pass a function for each tag:
+
+```elixir
+YAML.decode("price: !money 12.50", tags: %{"!money" => &Decimal.new/1})
+# {:ok, %{"price" => Decimal.new("12.50")}}
+```
+
 ### Files
 
 To read or write a whole file, use `YAML.decode_file/2` and `YAML.encode_file/3`:
