@@ -5,7 +5,7 @@ defmodule YAML.Parser do
 
   alias YAML.Native
   alias YAML.ParsingError
-  alias YAML.AST.{Document, Scalar, List, Mapping}
+  alias YAML.AST.{Document, Scalar, List, Mapping, Meta}
 
   @schemas [:failsafe, :json, :core, :yaml11]
 
@@ -92,35 +92,50 @@ defmodule YAML.Parser do
            }
          }
        ]
-    iex>YAML.Parser.simplify(ast, atomize_keys)
+    iex>YAML.Parser.simplify(ast, atomize_keys, tags)
     [%{"key" => "value"}]
 
   """
-  def simplify(ast, atomize_keys \\ false)
+  def simplify(ast, atomize_keys \\ false, tags \\ %{})
 
-  def simplify(%Document{root: root}, atomize_keys) do
-    simplify(root, atomize_keys)
+  def simplify(%Document{root: root}, atomize_keys, tags) do
+    simplify(root, atomize_keys, tags)
   end
 
-  def simplify(%Mapping{pairs: pairs}, atomize_keys) do
-    Map.new(pairs, fn {key, value} ->
-      {key |> simplify(atomize_keys) |> atomize_key(atomize_keys), simplify(value, atomize_keys)}
+  def simplify(%Mapping{pairs: pairs, meta: meta}, atomize_keys, tags) do
+    pairs
+    |> Map.new(fn {key, value} ->
+      {key |> simplify(atomize_keys, tags) |> atomize_key(atomize_keys),
+       simplify(value, atomize_keys, tags)}
     end)
+    |> handle_tag(meta, tags)
   end
 
-  def simplify(%List{items: items}, atomize_keys) do
-    Enum.map(items, &simplify(&1, atomize_keys))
+  def simplify(%List{items: items, meta: meta}, atomize_keys, tags) do
+    items
+    |> Enum.map(&simplify(&1, atomize_keys, tags))
+    |> handle_tag(meta, tags)
   end
 
-  def simplify(%Scalar{value: value}, _atomize_keys) do
-    value
+  def simplify(%Scalar{value: value, meta: meta}, _atomize_keys, tags) do
+    handle_tag(value, meta, tags)
   end
 
-  def simplify(ast_documents, atomize_keys) when is_list(ast_documents) do
-    Enum.map(ast_documents, &simplify(&1, atomize_keys))
+  def simplify(ast_documents, atomize_keys, tags) when is_list(ast_documents) do
+    Enum.map(ast_documents, &simplify(&1, atomize_keys, tags))
   end
 
-  def simplify(value, _atomize_keys), do: value
+  def simplify(value, _atomize_keys, _tags), do: value
+
+  # Calls the function given for the node's tag in the `:tags` option
+  defp handle_tag(value, _meta, tags) when map_size(tags) == 0, do: value
+
+  defp handle_tag(value, %Meta{tag: tag}, tags) do
+    case tags do
+      %{^tag => fun} -> fun.(value)
+      _ -> value
+    end
+  end
 
   # Each alias comes as {:__yaml_alias__, index} and becomes its anchor's value, shared, not copied
   # An anchored value can only hold aliases to earlier anchors
