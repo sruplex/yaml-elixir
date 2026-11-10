@@ -213,6 +213,9 @@ File.stream!("in.yml")
 |> Stream.run()
 ```
 
+For more examples, see the [Cookbook](guides/cookbook.md). Coming from YamlElixir? See
+[Migrating from YamlElixir](guides/migrating_from_yaml_elixir.md).
+
 ### Performance
 
 Inputs over 2 KB are parsed half a millisecond at a time, so a large file doesn't hold up other

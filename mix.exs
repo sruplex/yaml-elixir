@@ -33,7 +33,13 @@ defmodule YAML.MixProject do
         main: @name,
         canonical: "https://hexdocs.pm/#{@app}",
         source_ref: "v#{@version}",
-        extras: ["README.md", "CHANGELOG.md"]
+        extras: [
+          "README.md",
+          "guides/cookbook.md",
+          "guides/migrating_from_yaml_elixir.md",
+          "CHANGELOG.md"
+        ],
+        groups_for_extras: [Guides: ~r/guides\//]
       ]
     ]
   end
