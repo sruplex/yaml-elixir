@@ -29,5 +29,8 @@ jobs:
       - name: Compile (warnings as errors)
         run: mix compile --warnings-as-errors
 
+      - name: Download the yaml-test-suite
+        run: git clone --depth 1 --branch data-2022-01-17 https://github.com/yaml/yaml-test-suite tmp/yaml-test-suite
+
       - name: Run tests
         run: mix test
