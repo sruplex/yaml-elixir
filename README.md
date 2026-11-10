@@ -181,6 +181,15 @@ YAML.decode("name: Ada\nemail: ada@example.com", as: %User{})
 # {:ok, %User{name: "Ada", email: "ada@example.com", password: nil}}
 ```
 
+### Files
+
+To read or write a whole file, use `YAML.decode_file/2` and `YAML.encode_file/3`:
+
+```elixir
+{:ok, config} = YAML.decode_file("config.yml")
+:ok = YAML.encode_file(config, "copy.yml")
+```
+
 ### Streaming
 
 To read or write large files one document at a time, use

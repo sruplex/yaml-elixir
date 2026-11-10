@@ -98,6 +98,41 @@ defmodule YAML do
   end
 
   @doc """
+  Reads and decodes the YAML file at `path`. Takes the same options as `decode/2`.
+
+  ## Examples
+
+      YAML.decode_file("config.yml")
+      #=> {:ok, %{"port" => 4000}}
+
+  """
+  @spec decode_file(Path.t(), keyword()) ::
+          {:ok, term()} | {:error, File.Error.t() | ParsingError.t() | ArgumentError.t()}
+  def decode_file(path, opts \\ []) when is_list(opts) do
+    case File.read(path) do
+      {:ok, binary} -> decode(binary, opts)
+      {:error, reason} -> {:error, %File.Error{reason: reason, action: "read file", path: path}}
+    end
+  end
+
+  @doc """
+  Same as `decode_file/2`, but raises on error.
+
+  ## Examples
+
+      YAML.decode_file!("config.yml")
+      #=> %{"port" => 4000}
+
+  """
+  @spec decode_file!(Path.t(), keyword()) :: term()
+  def decode_file!(path, opts \\ []) when is_list(opts) do
+    case decode_file(path, opts) do
+      {:ok, yaml} -> yaml
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
   Lazily decodes a stream of YAML text, such as `File.stream!/1`, one document at a time,
   yielding `{:ok, document}` or `{:error, error}` for each. Takes the same options as
   `decode/2`, except `:return`. Raises `YAML.ArgumentError` on invalid options.
@@ -285,6 +320,46 @@ defmodule YAML do
   def encode_to_iodata!(term, opts \\ []) when is_list(opts) do
     case encode_to_iodata(term, opts) do
       {:ok, iodata} -> iodata
+      {:error, error} -> raise error
+    end
+  end
+
+  @doc """
+  Encodes `term` and writes it to the file at `path`. Takes the same options as `encode/2`.
+
+  ## Examples
+
+      YAML.encode_file(%{"port" => 4000}, "config.yml")
+      #=> :ok
+
+  """
+  @spec encode_file(term(), Path.t(), keyword()) ::
+          :ok | {:error, File.Error.t() | EncodeError.t() | ArgumentError.t()}
+  def encode_file(term, path, opts \\ []) when is_list(opts) do
+    with {:ok, iodata} <- encode_to_iodata(term, opts) do
+      case File.write(path, iodata) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          {:error, %File.Error{reason: reason, action: "write to file", path: path}}
+      end
+    end
+  end
+
+  @doc """
+  Same as `encode_file/3`, but raises on error.
+
+  ## Examples
+
+      YAML.encode_file!(%{"port" => 4000}, "config.yml")
+      #=> :ok
+
+  """
+  @spec encode_file!(term(), Path.t(), keyword()) :: :ok
+  def encode_file!(term, path, opts \\ []) when is_list(opts) do
+    case encode_file(term, path, opts) do
+      :ok -> :ok
       {:error, error} -> raise error
     end
   end
