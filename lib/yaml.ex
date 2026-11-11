@@ -48,7 +48,8 @@ defmodule YAML do
       nested structs. Not supported with `detailed: true`.
 
     * `:tags` - a map of custom tags to 1-arity functions, such as `%{"!money" => &Decimal.new/1}`.
-      Each tagged value is replaced by the function's result (default: `%{}`)
+      Each tagged value, with scalars as strings, is replaced by the function's result. Errors
+      raised by a function are not caught. Not supported with `detailed: true` (default: `%{}`)
 
     * `:schema` - how plain scalars are typed: `:core`, `:yaml11`, `:json` or `:failsafe` (default: `:core`)
 
@@ -453,11 +454,19 @@ defmodule YAML do
         end
 
       {:tags, v} = opt, {:ok, acc} when is_map(v) ->
-        if Enum.all?(v, fn {tag, fun} -> is_binary(tag) and is_function(fun, 1) end) do
+        # Core tags such as "!!str" are given in full form to every plain value, so they're refused
+        if Enum.all?(v, fn {tag, fun} ->
+             is_binary(tag) and not String.starts_with?(tag, ["!!", "tag:yaml.org,2002:"]) and
+               is_function(fun, 1)
+           end) do
           {:cont, {:ok, [opt | acc]}}
         else
           error =
-            ArgumentError.invalid_option(:tags, v, "must map tag strings to 1-arity functions")
+            ArgumentError.invalid_option(
+              :tags,
+              v,
+              ~s(must map custom tags such as "!money" to 1-arity functions)
+            )
 
           {:halt, {:error, error}}
         end
@@ -485,11 +494,21 @@ defmodule YAML do
     end)
     |> case do
       {:ok, valid} ->
-        if valid[:detailed] and Keyword.has_key?(valid, :as) do
-          {:error,
-           ArgumentError.invalid_option(:as, valid[:as], "is not supported with detailed: true")}
-        else
-          {:ok, valid}
+        cond do
+          valid[:detailed] and Keyword.has_key?(valid, :as) ->
+            {:error,
+             ArgumentError.invalid_option(:as, valid[:as], "is not supported with detailed: true")}
+
+          valid[:detailed] and valid[:tags] not in [nil, %{}] ->
+            {:error,
+             ArgumentError.invalid_option(
+               :tags,
+               valid[:tags],
+               "is not supported with detailed: true"
+             )}
+
+          true ->
+            {:ok, valid}
         end
 
       error ->

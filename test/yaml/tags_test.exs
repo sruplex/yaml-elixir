@@ -50,6 +50,14 @@ defmodule YAML.TagsTest do
                 }}
     end
 
+    test "runs once for each use of an anchor" do
+      tags = %{"!c" => fn value -> send(self(), {:called, value}) end}
+      YAML.decode("a: &x !c 1\nb: *x\nc: *x", tags: tags)
+
+      for _ <- 1..3, do: assert_received({:called, "1"})
+      refute_received {:called, _}
+    end
+
     test "runs before as:" do
       assert YAML.decode("id: 1\nprice: !money 2 EUR", as: %Order{}, tags: @tags) ==
                {:ok, %Order{id: 1, price: %Money{amount: "2", currency: "EUR"}}}
@@ -61,9 +69,12 @@ defmodule YAML.TagsTest do
       assert Enum.to_list(stream) == [%{"a" => MapSet.new([1])}, %{"b" => MapSet.new([2])}]
     end
 
-    test "is ignored with detailed: true" do
-      {:ok, doc} = YAML.decode("!set [1]", tags: @tags, detailed: true)
-      assert doc.root.meta.tag == "!set"
+    test "returns an error with detailed: true" do
+      assert {:error,
+              %ArgumentError{option: :tags, message: "is not supported with detailed: true"}} =
+               YAML.decode("!set [1]", tags: @tags, detailed: true)
+
+      assert {:ok, _} = YAML.decode("!set [1]", tags: %{}, detailed: true)
     end
 
     test "raises the function's own error" do
@@ -77,6 +88,11 @@ defmodule YAML.TagsTest do
 
       assert {:error, %ArgumentError{option: :tags}} =
                YAML.decode("a", tags: %{"!a" => &Map.put/3})
+
+      for tag <- ["!!str", "tag:yaml.org,2002:str"] do
+        assert {:error, %ArgumentError{option: :tags}} =
+                 YAML.decode("a", tags: %{tag => &String.upcase/1})
+      end
     end
   end
 end

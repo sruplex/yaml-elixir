@@ -92,7 +92,7 @@ defmodule YAML.Parser do
            }
          }
        ]
-    iex>YAML.Parser.simplify(ast, atomize_keys, tags)
+    iex> YAML.Parser.simplify(ast)
     [%{"key" => "value"}]
 
   """
