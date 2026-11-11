@@ -77,33 +77,33 @@ fn parse_input<'a>(env: Env<'a>, input: Binary<'a>, schema: Atom) -> NifResult<T
     for item in Parser::new_from_str(yaml) {
         match item {
             Ok((event, span)) => builder.on_event(event, span),
-            Err(e) => scan_error = Some(end_of_text(yaml, e.info(), e.marker())),
+            Err(e) => scan_error = Some(e),
         }
         if scan_error.is_some() || builder.error.is_some() {
             break;
         }
     }
 
-    let error = builder.error.take().or(scan_error);
+    // An error found at the end of the input is reported at the end of the last line
+    let error = builder.error.take().or(scan_error.map(|e| {
+        let (line, col) = (e.marker().line(), e.marker().col() + 1);
+        let body = yaml.strip_suffix('\n').unwrap_or(yaml);
+        if col == 1 && line == body.matches('\n').count() + 2 {
+            let last = body.rsplit('\n').next().unwrap_or("");
+            (
+                e.info().to_string(),
+                line - 1,
+                last.trim_end_matches('\r').chars().count() + 1,
+            )
+        } else {
+            (e.info().to_string(), line, col)
+        }
+    }));
 
     Ok(match error {
         Some((message, line, column)) => (atoms::error(), message, line, column).encode(env),
         None => (atoms::ok(), builder.documents).encode(env),
     })
-}
-
-// An error found at the end of the input is reported at the end of the last line
-fn end_of_text(yaml: &str, info: &str, mark: &Marker) -> (String, usize, usize) {
-    let (line, col) = (mark.line(), mark.col() + 1);
-    let body = yaml.strip_suffix('\n').unwrap_or(yaml);
-
-    if col == 1 && line == body.matches('\n').count() + 2 {
-        let last = body.rsplit('\n').next().unwrap_or("");
-        let col = last.trim_end_matches('\r').chars().count() + 1;
-        (info.to_string(), line - 1, col)
-    } else {
-        (info.to_string(), line, col)
-    }
 }
 
 // A collection's start event can come late, so its position is fixed when its first child arrives
@@ -366,6 +366,8 @@ impl<'input> SpannedEventReceiver<'input> for Builder<'_> {
                     self.add(node, size, anchor, mark);
                 }
             }
+            // An anchor only belongs to its own document
+            Event::DocumentStart(_) => self.anchors.clear(),
             Event::Alias(id) => match self.anchors.get(&id).copied() {
                 Some((node, size)) => {
                     self.aliased += size;
@@ -524,18 +526,23 @@ fn resolve<'a>(
         Some(t) if is_non_specific(t) => Ok(str()),
         Some(t) if t.handle == YAML_TAG => match t.suffix.as_str() {
             "str" => Ok(str()),
-            "int" => int(env, text)
-                .map(|v| (tags.int, v))
+            "int" => core_number(env, tags, text)
+                .or_else(|| yaml11_number(env, tags, text))
+                .filter(|(tag, _)| *tag == tags.int)
                 .ok_or("invalid integer".to_string()),
             "float" => float(env, text)
                 .map(|v| (tags.float, v))
                 .ok_or("invalid float".to_string()),
-            "bool" => bool_any(text)
+            "bool" => bool_11(text)
                 .map(|b| (tags.bool, b.encode(env)))
                 .ok_or("invalid boolean".to_string()),
             "null" => Ok((tags.null, atoms::nil().encode(env))),
             "binary" => base64(text)
-                .map(|b| (tags.binary, bytes(env, &b)))
+                .map(|b| {
+                    let mut binary = rustler::NewBinary::new(env, b.len());
+                    binary.as_mut_slice().copy_from_slice(&b);
+                    (tags.binary, Term::from(binary))
+                })
                 .ok_or("invalid binary".to_string()),
             _ => Ok((full_tag(t).encode(env), text.encode(env))),
         },
@@ -560,7 +567,9 @@ fn plain<'a>(
             "true" => Ok((tags.bool, true.encode(env))),
             "false" => Ok((tags.bool, false.encode(env))),
             _ if json_int(text) => Ok((tags.int, int(env, text).unwrap())),
-            _ if json_float(text) => Ok((tags.float, float(env, text).unwrap())),
+            _ if json_float(text) => float(env, text)
+                .map(|v| (tags.float, v))
+                .ok_or("invalid float".to_string()),
             _ => Err("invalid plain scalar for the JSON schema".to_string()),
         },
         Schema::Core => match text {
@@ -752,14 +761,6 @@ fn count(b: &[u8], i: &mut usize, f: impl Fn(u8) -> bool) -> usize {
     *i - start
 }
 
-fn bool_any(text: &str) -> Option<bool> {
-    match text {
-        "true" | "True" | "TRUE" => Some(true),
-        "false" | "False" | "FALSE" => Some(false),
-        _ => bool_11(text),
-    }
-}
-
 fn bool_11(text: &str) -> Option<bool> {
     match text {
         "y" | "Y" | "yes" | "Yes" | "YES" | "true" | "True" | "TRUE" | "on" | "On" | "ON" => {
@@ -805,12 +806,6 @@ fn float<'a>(env: Env<'a>, text: &str) -> Option<Term<'a>> {
         .ok()
         .filter(|f| f.is_finite())
         .map(|f| f.encode(env))
-}
-
-fn bytes<'a>(env: Env<'a>, data: &[u8]) -> Term<'a> {
-    let mut binary = rustler::NewBinary::new(env, data.len());
-    binary.as_mut_slice().copy_from_slice(data);
-    Term::from(binary)
 }
 
 // Base64 with whitespace allowed between characters

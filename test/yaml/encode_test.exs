@@ -436,12 +436,13 @@ defmodule YAML.EncodeTest do
       end
     end
 
-    test "a map key that starts with a \"? key\" is written in flow style" do
+    test "a map key that starts with a \"? key\" is written in block style" do
       for {value, yaml} <- [
-            {%{%{[1] => 2} => 3}, "? {[1]: 2}\n: 3\n"},
-            {%{%{%{"a" => 1} => "b,c"} => [1]}, ~s(? {{"a": 1}: "b,c"}\n:\n  - 1\n)},
-            {%{%{[] => %{}, "a" => [nil, 1.5]} => 1}, ~s(? {[]: {}, "a": [null, 1.5]}\n: 1\n)},
-            {%{"x" => [%{%{["<<"] => "y"} => 1}]}, ~s(x:\n  - ? {["<<"]: "y"}\n    : 1\n)}
+            {%{%{[1] => 2} => 3}, "? ? - 1\n  : 2\n: 3\n"},
+            {%{%{%{"a" => 1} => "b,c"} => [1]}, "? ? a: 1\n  : b,c\n:\n  - 1\n"},
+            {%{%{[] => %{}, "a" => [nil, 1.5]} => 1},
+             "? ? []\n  : {}\n  a:\n    - null\n    - 1.5\n: 1\n"},
+            {%{"x" => [%{%{["<<"] => "y"} => 1}]}, ~s(x:\n  - ? ? - "<<"\n      : "y"\n    : 1\n)}
           ] do
         assert emit(value) == yaml
         assert decode(yaml, :core) == {:ok, value}
@@ -526,9 +527,11 @@ defmodule YAML.EncodeTest do
       assert IO.iodata_to_binary(elem(Encode.document(document), 1)) == "---\n" <> yaml
     end
 
-    test "a map key in an AST that starts with a \"? key\" is written in flow style" do
+    test "a map key in an AST that starts with a \"? key\" is written in block style" do
       {:ok, [document]} = YAML.Parser.parse("? {[1]: 2}\n: 3\n")
-      assert IO.iodata_to_binary(elem(Encode.document(document), 1)) == "---\n? {[1]: 2}\n: 3\n"
+
+      assert IO.iodata_to_binary(elem(Encode.document(document), 1)) ==
+               "---\n? ? - 1\n  : 2\n: 3\n"
     end
   end
 

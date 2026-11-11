@@ -18,6 +18,9 @@ def deps do
 end
 ```
 
+The Rust parser is downloaded prebuilt for your platform. To build it from source instead,
+install Rust, set `YAML_BUILD=true` and add `{:rustler, "~> 0.38.0", runtime: false}` to your deps.
+
 
 
 ## Usage
@@ -205,7 +208,7 @@ File.stream!("in.yml")
 
 ### Performance
 
-Inputs over 8 KB are decoded on a dirty scheduler. If your app decodes many of them at the same
+Inputs over 2 KB are decoded on a dirty scheduler. If your app decodes many of them at the same
 time, start the VM with `+Mdai max` so they can run in parallel, for example with
 `ELIXIR_ERL_OPTIONS="+Mdai max"` or in `rel/vm.args.eex`.
 

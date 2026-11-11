@@ -6,9 +6,12 @@
 
 - Decoding uses a Rust parser instead of yamerl, and is about 10 times faster. The parser is downloaded
   prebuilt for macOS, Linux and Windows, so no Rust toolchain is needed. Set `YAML_BUILD=true` to build it from source.
-- Requires Elixir `~> 1.16`.
+- Requires Elixir `~> 1.16`, the oldest version `rustler_precompiled` supports. On Elixir 1.14 or 1.15, stay on `{:yaml, "~> 0.3.0"}`.
 - The `:yamerl_opts` option is replaced by `:schema`. Change `yamerl_opts: [schema: :yaml11]` to `schema: :yaml11`.
 - Parse error messages are worded differently.
+- `YAML.Parser.parse/2` and `parse!/2` take a schema atom instead of yamerl options.
+  Change `YAML.Parser.parse(yaml, schema: :yaml11)` to `YAML.Parser.parse(yaml, :yaml11)`.
+- Input must be UTF-8. yamerl also read UTF-16 and UTF-32.
 
 ### Added
 

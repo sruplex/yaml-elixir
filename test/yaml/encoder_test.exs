@@ -68,7 +68,7 @@ defmodule YAML.EncoderTest do
 
     test "are encoded inside a map key" do
       assert encode(%{%{[1] => %Point{x: 1, y: 2}} => 1}) ==
-               {:ok, ~s(---\n? {[1]: {"x": 1, "y": 2}}\n: 1\n)}
+               {:ok, ~s(---\n? ? - 1\n  :\n    x: 1\n    "y": 2\n: 1\n)}
     end
 
     test "are encoded in each streamed document" do

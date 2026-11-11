@@ -1113,10 +1113,40 @@ defmodule YAMLTest do
       end
     end
 
+    test "a JSON float too large for a float is an error" do
+      assert {:error, %YAML.ParsingError{message: "invalid float"}} =
+               YAML.decode("1e400", schema: :json)
+    end
+
+    test "an alias to an anchor in an earlier document is an error" do
+      assert {:error, %YAML.ParsingError{message: "unknown anchor"}} =
+               YAML.decode("--- &a 1\n--- *a\n", return: :all_documents)
+    end
+
+    test "!!int reads integers in any base" do
+      for {text, int} <- [
+            {"12", 12},
+            {"+12", 12},
+            {"0x1F", 31},
+            {"-0x1F", -31},
+            {"0o17", 15},
+            {"1_000", 1000}
+          ] do
+        assert YAML.decode!("k: !!int " <> text)["k"] == int, text
+      end
+
+      assert {:error, %YAML.ParsingError{message: "invalid integer"}} =
+               YAML.decode("k: !!int 1.5")
+    end
+
+    test "YAML.Parser.parse/2 takes a schema atom" do
+      assert {:ok, [%YAML.AST.Document{root: %{value: true}}]} = YAML.Parser.parse("yes", :yaml11)
+    end
+
     test "small and large inputs decode the same" do
       doc = "a: [1, 2]\nb: {c: d}\n"
       large = String.duplicate(doc <> "---\n", 1_000)
-      assert byte_size(doc) < 8_000 and byte_size(large) > 8_000
+      assert byte_size(doc) < 2_000 and byte_size(large) > 2_000
 
       assert {:ok, documents} = YAML.decode(large, return: :all_documents, detailed: true)
       assert {:ok, [first]} = YAML.decode(doc, return: :all_documents, detailed: true)
@@ -1512,11 +1542,11 @@ defmodule YAMLTest do
                Enum.map(1..40, &"k#{String.pad_leading(Integer.to_string(&1), 2, "0")}: #{&1}")
     end
 
-    test "sort_maps: true also sorts keys written in flow style" do
+    test "sort_maps: true also sorts the keys of a map key" do
       value = %{%{[1] => 1, z: 2, a: 3} => 1}
 
       assert YAML.encode(value, sort_maps: true) ==
-               {:ok, ~s(---\n? {[1]: 1, "a": 3, "z": 2}\n: 1\n)}
+               {:ok, "---\n? ? - 1\n  : 1\n  a: 3\n  z: 2\n: 1\n"}
     end
 
     test "without sort_maps, map keys follow Elixir's map order" do

@@ -8,7 +8,9 @@ defmodule YAML.Parser do
   alias YAML.AST.{Document, Scalar, List, Mapping}
 
   # Inputs from this size take over a millisecond, so they run on a dirty scheduler
-  @dirty_size 8_000
+  @dirty_size 2_000
+
+  @schemas [:failsafe, :json, :core, :yaml11]
 
   @doc """
   Parses YAML string into AST (Abstract Syntax Tree) with full metadata.
@@ -31,7 +33,7 @@ defmodule YAML.Parser do
     ]
   """
 
-  def parse(string, schema \\ :core) when is_binary(string) do
+  def parse(string, schema \\ :core) when is_binary(string) and schema in @schemas do
     result =
       if byte_size(string) < @dirty_size,
         do: Native.parse(string, schema),
@@ -43,7 +45,7 @@ defmodule YAML.Parser do
     end
   end
 
-  def parse!(string, schema \\ :core) when is_binary(string) do
+  def parse!(string, schema \\ :core) when is_binary(string) and schema in @schemas do
     case parse(string, schema) do
       {:ok, yaml} -> yaml
       {:error, error} -> raise error
