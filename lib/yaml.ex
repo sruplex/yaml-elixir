@@ -107,11 +107,15 @@ defmodule YAML do
 
   """
   @spec decode_file(Path.t(), keyword()) ::
-          {:ok, term()} | {:error, File.Error.t() | ParsingError.t() | ArgumentError.t()}
+          {:ok, term()} | {:error, %File.Error{} | ParsingError.t() | ArgumentError.t()}
   def decode_file(path, opts \\ []) when is_list(opts) do
     case File.read(path) do
-      {:ok, binary} -> decode(binary, opts)
-      {:error, reason} -> {:error, %File.Error{reason: reason, action: "read file", path: path}}
+      {:ok, binary} ->
+        decode(binary, opts)
+
+      {:error, reason} ->
+        {:error,
+         %File.Error{reason: reason, action: "read file", path: IO.chardata_to_string(path)}}
     end
   end
 
@@ -334,7 +338,7 @@ defmodule YAML do
 
   """
   @spec encode_file(term(), Path.t(), keyword()) ::
-          :ok | {:error, File.Error.t() | EncodeError.t() | ArgumentError.t()}
+          :ok | {:error, %File.Error{} | EncodeError.t() | ArgumentError.t()}
   def encode_file(term, path, opts \\ []) when is_list(opts) do
     with {:ok, iodata} <- encode_to_iodata(term, opts) do
       case File.write(path, iodata) do
@@ -342,7 +346,8 @@ defmodule YAML do
           :ok
 
         {:error, reason} ->
-          {:error, %File.Error{reason: reason, action: "write to file", path: path}}
+          {:error,
+           %File.Error{reason: reason, action: "write to file", path: IO.chardata_to_string(path)}}
       end
     end
   end

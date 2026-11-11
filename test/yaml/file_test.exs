@@ -22,6 +22,7 @@ defmodule YAML.FileTest do
                {:error, %File.Error{reason: :enoent, action: "read file", path: path}}
 
       assert_raise File.Error, ~r/could not read file/, fn -> YAML.decode_file!(path) end
+      assert {:error, %File.Error{path: ^path}} = YAML.decode_file(String.to_charlist(path))
     end
 
     test "returns the parsing and option errors of decode", %{tmp_dir: dir} do
@@ -53,6 +54,7 @@ defmodule YAML.FileTest do
                {:error, %File.Error{reason: :enoent, action: "write to file", path: path}}
 
       assert_raise File.Error, ~r/could not write to file/, fn -> YAML.encode_file!(1, path) end
+      assert {:error, %File.Error{path: ^path}} = YAML.encode_file(1, String.to_charlist(path))
     end
 
     test "returns encode and option errors without writing", %{tmp_dir: dir} do
