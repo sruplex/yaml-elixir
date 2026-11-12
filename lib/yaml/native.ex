@@ -29,4 +29,11 @@ defmodule YAML.Native do
   # The mode is :ast, or {:plain, enable_merge} for maps and lists
   def parse(_yaml, _schema, _mode), do: :erlang.nif_error(:nif_not_loaded)
   def resume(_job), do: :erlang.nif_error(:nif_not_loaded)
+
+  # A stream takes chunks of text; each call returns {:ok, binary} with the results of the documents
+  # it completed, :ok when it completed none, or {:cont, stream} to pass to stream_resume/1
+  def stream_new(_schema, _mode), do: :erlang.nif_error(:nif_not_loaded)
+  def stream_feed(_stream, _chunk), do: :erlang.nif_error(:nif_not_loaded)
+  def stream_end(_stream), do: :erlang.nif_error(:nif_not_loaded)
+  def stream_resume(_stream), do: :erlang.nif_error(:nif_not_loaded)
 end

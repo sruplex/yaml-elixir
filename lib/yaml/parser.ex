@@ -45,14 +45,29 @@ defmodule YAML.Parser do
   # A large input comes back unfinished after each slice of work, so other processes run in between
   defp finish({:cont, job}), do: job |> Native.resume() |> finish()
 
-  defp finish({:ok, binary}) do
-    case :erlang.binary_to_term(binary) do
-      {documents, []} -> {:ok, documents}
-      {documents, aliased} -> {:ok, unalias(documents, unalias_table(aliased))}
-    end
+  defp finish({:ok, binary}), do: binary |> :erlang.binary_to_term() |> result()
+  defp finish(error), do: result(error)
+
+  # Decodes chunks in Rust as they arrive, giving each document's result once its chunk is read
+  @doc false
+  def stream(enumerable, schema, mode) do
+    Stream.transform(
+      enumerable,
+      fn -> Native.stream_new(schema, mode) end,
+      fn chunk, stream -> {stream |> Native.stream_feed(chunk) |> batch(), stream} end,
+      fn stream -> {stream |> Native.stream_end() |> batch(), stream} end,
+      fn _stream -> :ok end
+    )
   end
 
-  defp finish({:error, message, line, column}),
+  defp batch({:cont, stream}), do: stream |> Native.stream_resume() |> batch()
+  defp batch(:ok), do: []
+  defp batch({:ok, binary}), do: binary |> :erlang.binary_to_term() |> Enum.map(&result/1)
+
+  defp result({documents, []}), do: {:ok, documents}
+  defp result({documents, aliased}), do: {:ok, unalias(documents, unalias_table(aliased))}
+
+  defp result({:error, message, line, column}),
     do: {:error, ParsingError.build(message, line, column)}
 
   def parse!(string, schema \\ :core) when is_binary(string) and schema in @schemas do

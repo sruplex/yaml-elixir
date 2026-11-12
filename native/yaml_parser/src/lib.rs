@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::Range;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -56,9 +56,7 @@ enum Schema {
 
 type Failure = (String, usize, usize);
 
-// Returns {:ok, binary}, {:error, message, line, column}, or {:cont, job} to pass to resume/1
-#[rustler::nif]
-fn parse<'a>(env: Env<'a>, input: Binary<'a>, schema: Atom, mode: Term<'a>) -> Term<'a> {
+fn options(schema: Atom, mode: Term) -> (Schema, Mode) {
     let schema = if schema == atoms::yaml11() {
         Schema::Yaml11
     } else if schema == atoms::json() {
@@ -73,11 +71,17 @@ fn parse<'a>(env: Env<'a>, input: Binary<'a>, schema: Atom, mode: Term<'a>) -> T
         Ok((tag, merge)) if tag == atoms::plain() => Mode::Plain { merge },
         _ => Mode::Ast,
     };
+    (schema, mode)
+}
 
+// Returns {:ok, binary}, {:error, message, line, column}, or {:cont, job} to pass to resume/1
+#[rustler::nif]
+fn parse<'a>(env: Env<'a>, input: Binary<'a>, schema: Atom, mode: Term<'a>) -> Term<'a> {
+    let (schema, mode) = options(schema, mode);
     let bytes = input.as_slice();
     if bytes.len() < SLICE_SIZE {
         // Without a deadline the job always finishes
-        let result = Job::new(bytes, schema, mode).step(None).unwrap();
+        let result = Job::new(bytes, schema, mode, 0).step(None).unwrap();
         return reply(env, result);
     }
     // The job keeps its own reference to the input, so the bytes it borrows live as long as it does
@@ -88,7 +92,7 @@ fn parse<'a>(env: Env<'a>, input: Binary<'a>, schema: Atom, mode: Term<'a>) -> T
         unsafe { std::mem::transmute::<&[u8], &'static [u8]>(input.as_slice()) }
     });
     let job = ResourceArc::new(Resumable {
-        job: Mutex::new(Job::new(bytes, schema, mode)),
+        job: Mutex::new(Job::new(bytes, schema, mode, 0)),
         _input: Mutex::new((owned, saved)),
     });
     slice(env, job)
@@ -143,16 +147,19 @@ struct Job<'t> {
     checked: usize,
     schema: Schema,
     mode: Mode,
+    // Lines before the input, for a document in a stream
+    offset: usize,
     run: Option<(Parser<'t, StrInput<'t>>, Builder<'t>)>,
 }
 
 impl<'t> Job<'t> {
-    fn new(bytes: &'t [u8], schema: Schema, mode: Mode) -> Self {
+    fn new(bytes: &'t [u8], schema: Schema, mode: Mode, offset: usize) -> Self {
         Job {
             bytes,
             checked: 0,
             schema,
             mode,
+            offset,
             run: None,
         }
     }
@@ -179,7 +186,11 @@ impl<'t> Job<'t> {
                         .map_or(0, |i| i + 1);
                     let column =
                         std::str::from_utf8(&before[start..]).map_or(1, |s| s.chars().count() + 1);
-                    return Some(Err(("invalid UTF-8".to_string(), line, column)));
+                    return Some(Err((
+                        "invalid UTF-8".to_string(),
+                        line + self.offset,
+                        column,
+                    )));
                 }
             }
             if late() {
@@ -191,7 +202,7 @@ impl<'t> Job<'t> {
             let text = unsafe { std::str::from_utf8_unchecked(self.bytes) };
             // A byte order mark isn't part of the content
             let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-            let builder = Builder::new(self.schema, self.mode, text);
+            let builder = Builder::new(self.schema, self.mode, text, self.offset);
             (Parser::new_from_str(text), builder)
         });
 
@@ -219,7 +230,7 @@ impl<'t> Job<'t> {
                 .take()
                 .or(scan_error.map(|e| end_error(e, builder.text)))
             {
-                Some(failure) => Err(failure),
+                Some((message, line, column)) => Err((message, line + self.offset, column)),
                 None => Ok(builder.finish()),
             },
         )
@@ -239,6 +250,230 @@ fn end_error(e: ScanError, yaml: &str) -> Failure {
         )
     } else {
         (e.info().to_string(), line, col)
+    }
+}
+
+// Streaming
+// ---------
+
+// Decodes chunks as they arrive: each feed returns the documents they completed, in one binary
+#[rustler::nif]
+fn stream_new(schema: Atom, mode: Term) -> ResourceArc<Streaming> {
+    let (schema, mode) = options(schema, mode);
+    ResourceArc::new(Streaming(Mutex::new(Stream {
+        splitter: Splitter {
+            start: 1,
+            line: 1,
+            ..Splitter::default()
+        },
+        current: None,
+        batch: Vec::new(),
+        results: 0,
+        ended: false,
+        schema,
+        mode,
+    })))
+}
+
+// Each returns {:ok, binary} with a list of {documents, aliased} or {:error, message, line, column},
+// :ok when no document was completed, or {:cont, stream} to pass to stream_resume/1
+#[rustler::nif]
+fn stream_feed<'a>(env: Env<'a>, stream: ResourceArc<Streaming>, chunk: Binary<'a>) -> Term<'a> {
+    stream
+        .0
+        .lock()
+        .unwrap()
+        .splitter
+        .input
+        .extend_from_slice(chunk.as_slice());
+    stream_slice(env, stream)
+}
+
+#[rustler::nif]
+fn stream_end(env: Env<'_>, stream: ResourceArc<Streaming>) -> Term<'_> {
+    stream.0.lock().unwrap().ended = true;
+    stream_slice(env, stream)
+}
+
+#[rustler::nif]
+fn stream_resume(env: Env<'_>, stream: ResourceArc<Streaming>) -> Term<'_> {
+    stream_slice(env, stream)
+}
+
+fn stream_slice(env: Env<'_>, stream: ResourceArc<Streaming>) -> Term<'_> {
+    let done = stream.0.lock().unwrap().run(Instant::now() + SLICE_TIME);
+    rustler::schedule::consume_timeslice(env, 50);
+    match done {
+        // Most lines of a stream finish no document, so they skip building a binary
+        Some(bytes) if bytes == [131, 106] => atoms::ok().encode(env),
+        Some(bytes) => reply(env, Ok(bytes)),
+        None => (atoms::cont(), stream).encode(env),
+    }
+}
+
+struct Streaming(Mutex<Stream>);
+
+#[rustler::resource_impl]
+impl rustler::Resource for Streaming {}
+
+struct Stream {
+    splitter: Splitter,
+    current: Option<Document>,
+    // The results so far, as list items
+    batch: Vec<u8>,
+    results: usize,
+    ended: bool,
+    schema: Schema,
+    mode: Mode,
+}
+
+// A document being parsed; the job is declared before the text it borrows, so it's dropped first
+struct Document {
+    job: Job<'static>,
+    _text: Box<[u8]>,
+}
+
+impl Stream {
+    // The batch once every complete document is parsed, or None when the deadline passed
+    fn run(&mut self, deadline: Instant) -> Option<Vec<u8>> {
+        loop {
+            if let Some(document) = &mut self.current {
+                match document.job.step(Some(deadline))? {
+                    Ok(bytes) => self.batch.extend_from_slice(&bytes[1..]),
+                    Err((message, line, column)) => {
+                        self.batch.extend_from_slice(&[104, 4]);
+                        write_atom(&mut self.batch, "error");
+                        write_binary(&mut self.batch, message.as_bytes());
+                        write_int(&mut self.batch, line as i64);
+                        write_int(&mut self.batch, column as i64);
+                    }
+                }
+                self.results += 1;
+                self.current = None;
+            }
+            if let Some((text, first_line)) = self.splitter.done.pop_front() {
+                let text = text.into_boxed_slice();
+                // The box's bytes stay put when it moves, and it lives as long as the job
+                let bytes = unsafe { std::mem::transmute::<&[u8], &'static [u8]>(&text[..]) };
+                self.current = Some(Document {
+                    job: Job::new(bytes, self.schema, self.mode, first_line - 1),
+                    _text: text,
+                });
+                continue;
+            }
+            if !self.splitter.cut(deadline) {
+                return None;
+            }
+            if !self.splitter.done.is_empty() {
+                continue;
+            }
+            if self.ended && !self.splitter.finished {
+                self.splitter.finish();
+                continue;
+            }
+
+            let mut out = vec![131];
+            if self.results > 0 {
+                out.push(108);
+                put_u32(&mut out, self.results);
+                out.append(&mut self.batch);
+            }
+            out.push(106);
+            self.results = 0;
+            return Some(out);
+        }
+    }
+}
+
+// Cuts streamed text into documents with their first line; a "---" or "..." line ends a document
+#[derive(Default)]
+struct Splitter {
+    // Text not yet cut into lines, from `at`
+    input: Vec<u8>,
+    at: usize,
+    searched: usize,
+    // The document's lines so far, each with its line break
+    text: Vec<u8>,
+    start: usize,
+    line: usize,
+    in_document: bool,
+    finished: bool,
+    done: VecDeque<(Vec<u8>, usize)>,
+}
+
+impl Splitter {
+    // Cuts the complete lines; false when the deadline passed first
+    fn cut(&mut self, deadline: Instant) -> bool {
+        let mut lines = 0u32;
+        // Only new text is searched, so a long line read in many chunks stays linear
+        while let Some(i) = self.input[self.searched..].iter().position(|&c| c == b'\n') {
+            let end = self.searched + i;
+            let line = std::mem::take(&mut self.input);
+            self.add_line(&line[self.at..end]);
+            self.input = line;
+            self.at = end + 1;
+            self.searched = self.at;
+            lines += 1;
+            if lines.is_multiple_of(1024) && Instant::now() >= deadline {
+                return false;
+            }
+        }
+        self.searched = self.input.len();
+        // Cut text is dropped once it's more than what's left, so moving the rest stays linear
+        if self.at > self.input.len() - self.at {
+            self.input.drain(..self.at);
+            self.searched -= self.at;
+            self.at = 0;
+        }
+        true
+    }
+
+    // The last line had no newline, so none is added after it
+    fn finish(&mut self) {
+        self.finished = true;
+        if self.at < self.input.len() {
+            let line = std::mem::take(&mut self.input);
+            self.add_line(&line[self.at..]);
+            self.text.pop();
+        }
+        (self.at, self.searched) = (0, 0);
+        self.finish_document();
+    }
+
+    fn add_line(&mut self, line: &[u8]) {
+        let marker = |m: &[u8]| {
+            line.starts_with(m) && matches!(line.get(3), None | Some(b' ' | b'\t' | b'\r'))
+        };
+        if marker(b"---") && self.in_document {
+            self.finish_document();
+            self.start = self.line;
+            self.push(line);
+        } else if marker(b"...") {
+            self.push(line);
+            self.finish_document();
+            self.start = self.line;
+            self.in_document = false;
+        } else {
+            // Outside a document, a blank line, comment or directive doesn't start one
+            let first = line.iter().find(|c| !c.is_ascii_whitespace());
+            if first.is_some_and(|c| !matches!(c, b'#' | b'%')) {
+                self.in_document = true;
+            }
+            self.push(line);
+        }
+    }
+
+    fn push(&mut self, line: &[u8]) {
+        self.text.extend_from_slice(line);
+        self.text.push(b'\n');
+        self.line += 1;
+    }
+
+    fn finish_document(&mut self) {
+        let text = std::mem::take(&mut self.text);
+        if self.in_document {
+            self.done.push_back((text, self.start));
+        }
     }
 }
 
@@ -434,6 +669,7 @@ struct Builder<'t> {
     stack: Vec<Frame>,
     out: Vec<u8>,
     documents: usize,
+    offset: usize,
     // Each anchored node's bytes, its number of values, and its index in the table once aliased
     anchors: HashMap<usize, (Vec<u8>, usize, Option<usize>)>,
     // The values of aliased anchors, written once each
@@ -445,7 +681,7 @@ struct Builder<'t> {
 }
 
 impl<'t> Builder<'t> {
-    fn new(schema: Schema, mode: Mode, text: &'t str) -> Self {
+    fn new(schema: Schema, mode: Mode, text: &'t str, offset: usize) -> Self {
         // {documents, aliased values}
         let mut out = vec![131, 104, 2];
         placeholder(&mut out, 108);
@@ -458,6 +694,7 @@ impl<'t> Builder<'t> {
             stack: Vec::new(),
             out,
             documents: 0,
+            offset,
             anchors: HashMap::new(),
             table: Vec::new(),
             spans: Vec::new(),
@@ -508,7 +745,7 @@ impl<'t> Builder<'t> {
         write_atom(&mut self.out, "tag");
         write_binary(&mut self.out, tag.as_bytes());
         write_atom(&mut self.out, "line");
-        write_int(&mut self.out, mark.line() as i64);
+        write_int(&mut self.out, (mark.line() + self.offset) as i64);
         write_atom(&mut self.out, "column");
         write_int(&mut self.out, mark.col() as i64 + 1);
     }

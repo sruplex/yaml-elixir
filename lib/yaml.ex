@@ -6,11 +6,10 @@ defmodule YAML do
   alias YAML.Merge
   alias YAML.Encode
   alias YAML.Decode
-  alias YAML.Splitter
   alias YAML.ArgumentError
   alias YAML.EncodeError
   alias YAML.ParsingError
-  alias YAML.AST.{Document, Scalar, List, Mapping, Meta}
+  alias YAML.AST.Document
 
   @valid_schema_values [:failsafe, :json, :core, :yaml11]
 
@@ -153,22 +152,13 @@ defmodule YAML do
         {:error, error} -> raise error
       end
 
+    mode = if opts[:detailed], do: :ast, else: {:plain, opts[:enable_merge]}
+
     enumerable
-    |> Splitter.split()
-    |> Stream.flat_map(fn {text, first_line} ->
-      # Line numbers start at the document, so they are moved to match the whole stream
-      offset = first_line - 1
-
-      case parse(text, opts) do
-        {:ok, documents} ->
-          documents
-          |> shift_lines(offset, opts[:detailed])
-          |> apply_options(opts)
-          |> Enum.map(&{:ok, &1})
-
-        {:error, error} ->
-          [{:error, shift_error(error, offset)}]
-      end
+    |> Parser.stream(opts[:schema], mode)
+    |> Stream.flat_map(fn
+      {:ok, documents} -> documents |> apply_options(opts) |> Enum.map(&{:ok, &1})
+      {:error, error} -> [{:error, error}]
     end)
   end
 
@@ -190,38 +180,6 @@ defmodule YAML do
       {:error, error} -> raise error
     end)
   end
-
-  defp shift_lines(documents, 0, _detailed), do: documents
-  defp shift_lines(documents, _offset, false), do: documents
-  defp shift_lines(documents, offset, true), do: Enum.map(documents, &shift_node(&1, offset))
-
-  defp shift_node(%Document{root: root} = document, offset),
-    do: %{document | root: shift_node(root, offset)}
-
-  defp shift_node(%Mapping{pairs: pairs, meta: meta} = node, offset) do
-    pairs =
-      Enum.map(pairs, fn {key, value} -> {shift_node(key, offset), shift_node(value, offset)} end)
-
-    %{node | pairs: pairs, meta: shift_meta(meta, offset)}
-  end
-
-  defp shift_node(%List{items: items, meta: meta} = node, offset),
-    do: %{node | items: Enum.map(items, &shift_node(&1, offset)), meta: shift_meta(meta, offset)}
-
-  defp shift_node(%Scalar{meta: meta} = node, offset),
-    do: %{node | meta: shift_meta(meta, offset)}
-
-  defp shift_node(node, _offset), do: node
-
-  defp shift_meta(%Meta{line: line} = meta, offset) when is_integer(line),
-    do: %{meta | line: line + offset}
-
-  defp shift_meta(meta, _offset), do: meta
-
-  defp shift_error(%ParsingError{location: {line, column}} = error, offset) when is_integer(line),
-    do: %{error | location: {line + offset, column}}
-
-  defp shift_error(error, _offset), do: error
 
   @doc """
   Encodes Elixir data, a YAML AST document or a list of documents into YAML.
