@@ -7,9 +7,6 @@ defmodule YAML.Parser do
   alias YAML.ParsingError
   alias YAML.AST.{Document, Scalar, List, Mapping}
 
-  # Inputs from this size take over a millisecond, so they run on a dirty scheduler
-  @dirty_size 2_000
-
   @schemas [:failsafe, :json, :core, :yaml11]
 
   @doc """
@@ -43,17 +40,20 @@ defmodule YAML.Parser do
     run(string, schema, {:plain, enable_merge})
   end
 
-  defp run(string, schema, mode) do
-    result =
-      if byte_size(string) < @dirty_size,
-        do: Native.parse(string, schema, mode),
-        else: Native.parse_dirty(string, schema, mode)
+  defp run(string, schema, mode), do: string |> Native.parse(schema, mode) |> finish()
 
-    case result do
-      {:ok, documents} -> {:ok, documents}
-      {:error, message, line, column} -> {:error, ParsingError.build(message, line, column)}
+  # A large input comes back unfinished after each slice of work, so other processes run in between
+  defp finish({:cont, job}), do: job |> Native.resume() |> finish()
+
+  defp finish({:ok, binary}) do
+    case :erlang.binary_to_term(binary) do
+      {documents, []} -> {:ok, documents}
+      {documents, aliased} -> {:ok, unalias(documents, unalias_table(aliased))}
     end
   end
+
+  defp finish({:error, message, line, column}),
+    do: {:error, ParsingError.build(message, line, column)}
 
   def parse!(string, schema \\ :core) when is_binary(string) and schema in @schemas do
     case parse(string, schema) do
@@ -106,6 +106,28 @@ defmodule YAML.Parser do
   end
 
   def simplify(value, _atomize_keys), do: value
+
+  # Each alias comes as {:__yaml_alias__, index} and becomes its anchor's value, shared, not copied
+  # An anchored value can only hold aliases to earlier anchors
+  defp unalias_table(aliased) do
+    aliased
+    |> Enum.with_index()
+    |> Enum.reduce(%{}, fn {value, index}, table ->
+      Map.put(table, index, unalias(value, table))
+    end)
+  end
+
+  defp unalias({:__yaml_alias__, index}, table), do: Map.fetch!(table, index)
+  defp unalias({key, value}, table), do: {unalias(key, table), unalias(value, table)}
+  defp unalias(list, table) when is_list(list), do: Enum.map(list, &unalias(&1, table))
+
+  defp unalias(map, table) when is_map(map),
+    do:
+      map
+      |> Map.to_list()
+      |> Map.new(fn {key, value} -> {unalias(key, table), unalias(value, table)} end)
+
+  defp unalias(value, _table), do: value
 
   # Turns the keys of decoded maps into atoms, as the :atomize_keys option does
   @doc false

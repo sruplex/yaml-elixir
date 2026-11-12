@@ -208,9 +208,8 @@ File.stream!("in.yml")
 
 ### Performance
 
-Inputs over 2 KB are decoded on a dirty scheduler. If your app decodes many of them at the same
-time, start the VM with `+Mdai max` so they can run in parallel, for example with
-`ELIXIR_ERL_OPTIONS="+Mdai max"` or in `rel/vm.args.eex`.
+Inputs over 2 KB are parsed half a millisecond at a time, so a large file doesn't hold up other
+processes, and many files can be decoded at once.
 
 
 

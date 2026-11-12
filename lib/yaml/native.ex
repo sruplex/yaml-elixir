@@ -24,8 +24,9 @@ defmodule YAML.Native do
       x86_64-unknown-linux-musl
     )
 
-  # Both return {:ok, documents} or {:error, message, line, column}; parse_dirty runs on a dirty scheduler
+  # Both return {:ok, binary} for :erlang.binary_to_term/1, {:error, message, line, column},
+  # or {:cont, job} after about half a millisecond, to pass to resume/1
   # The mode is :ast, or {:plain, enable_merge} for maps and lists
   def parse(_yaml, _schema, _mode), do: :erlang.nif_error(:nif_not_loaded)
-  def parse_dirty(_yaml, _schema, _mode), do: :erlang.nif_error(:nif_not_loaded)
+  def resume(_job), do: :erlang.nif_error(:nif_not_loaded)
 end

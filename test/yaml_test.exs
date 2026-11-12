@@ -1151,10 +1151,24 @@ defmodule YAMLTest do
       assert {:ok, documents} = YAML.decode(large, return: :all_documents, detailed: true)
       assert {:ok, [first]} = YAML.decode(doc, return: :all_documents, detailed: true)
       assert hd(documents) == first
-      assert YAML.Native.parse(large, :core, :ast) == YAML.Native.parse_dirty(large, :core, :ast)
+      assert hd(YAML.decode!(large, return: :all_documents)) == YAML.decode!(doc)
+    end
 
-      assert YAML.Native.parse(large, :core, {:plain, true}) ==
-               YAML.Native.parse_dirty(large, :core, {:plain, true})
+    test "a large input is parsed a slice at a time" do
+      huge = String.duplicate("---\na: [1, 2]\nb: {c: d}\n", 50_000)
+      assert {:cont, _job} = YAML.Native.parse(huge, :core, :ast)
+      assert length(YAML.decode!(huge, return: :all_documents)) == 50_000
+    end
+
+    test "aliases share their anchor's value instead of copying it" do
+      text = String.duplicate("x", 100_000)
+
+      yaml =
+        "a: &a #{text}\nm: &m {k: [1, 2]}\nb: [#{Enum.map_join(1..1_000, ", ", fn _ -> "*a" end)}]\nc: [*m, *m]\n"
+
+      assert {:ok, %{"a" => a, "b" => b, "m" => m, "c" => [m1, m2]}} = YAML.decode(yaml)
+      assert length(b) == 1_000 and Enum.all?(b, &:erts_debug.same(&1, hd(b)))
+      assert hd(b) == a and m1 == m and :erts_debug.same(m1, m2)
     end
 
     test "aliases that expand a small file into too many values are an error" do
@@ -1291,6 +1305,19 @@ defmodule YAMLTest do
                "tie-fighter" => "|\\-*-/|",
                "unicode" => "Sosa did fine.☺"
              }
+    end
+
+    test "enable_merge: true -- merges maps holding any value" do
+      yaml =
+        "base: &b\n  big: 123456789012345678901234567890\n  atom: .inf\n  list: [1, [2]]\nx:\n  <<: *b\n  y: 1\n"
+
+      base = %{
+        "big" => 123_456_789_012_345_678_901_234_567_890,
+        "atom" => :"+inf",
+        "list" => [1, [2]]
+      }
+
+      assert YAML.decode!(yaml) == %{"base" => base, "x" => Map.put(base, "y", 1)}
     end
 
     test "enable_merge: true -- respects merge order", %{merge_yaml: merge_yaml} do
