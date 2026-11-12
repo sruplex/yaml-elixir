@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
 use num_bigint::BigInt;
+use rustler::types::map::MapIterator;
 use rustler::{Atom, Binary, Encoder, Env, NifResult, Term};
 use saphyr_parser::{Event, Marker, Parser, ScalarStyle, Span, SpannedEventReceiver, Tag};
 
 mod atoms {
     rustler::atoms! {
-        ok, error, nil,
+        ok, error, nil, plain,
         core, yaml11, json, failsafe,
         nan, inf = "+inf", neg_inf = "-inf",
         __struct__, value, meta, tag, line, column, items, length, pairs, root,
@@ -23,6 +24,13 @@ const YAML_TAG: &str = "tag:yaml.org,2002:";
 // Values aliases may add beyond ten times the values written out, so a small file can't expand into gigabytes
 const MAX_ALIASED: usize = 1_000_000;
 
+// Ast builds YAML.AST structs; Plain builds maps and lists, with merge keys resolved
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    Ast,
+    Plain { merge: bool },
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Schema {
     Core,
@@ -33,16 +41,26 @@ enum Schema {
 
 // Small inputs take under a millisecond, so they run on a normal scheduler
 #[rustler::nif]
-fn parse<'a>(env: Env<'a>, input: Binary<'a>, schema: Atom) -> NifResult<Term<'a>> {
-    parse_input(env, input, schema)
+fn parse<'a>(env: Env<'a>, input: Binary<'a>, schema: Atom, mode: Term<'a>) -> NifResult<Term<'a>> {
+    parse_input(env, input, schema, mode)
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-fn parse_dirty<'a>(env: Env<'a>, input: Binary<'a>, schema: Atom) -> NifResult<Term<'a>> {
-    parse_input(env, input, schema)
+fn parse_dirty<'a>(
+    env: Env<'a>,
+    input: Binary<'a>,
+    schema: Atom,
+    mode: Term<'a>,
+) -> NifResult<Term<'a>> {
+    parse_input(env, input, schema, mode)
 }
 
-fn parse_input<'a>(env: Env<'a>, input: Binary<'a>, schema: Atom) -> NifResult<Term<'a>> {
+fn parse_input<'a>(
+    env: Env<'a>,
+    input: Binary<'a>,
+    schema: Atom,
+    mode: Term<'a>,
+) -> NifResult<Term<'a>> {
     let bytes = input.as_slice();
     let yaml = match std::str::from_utf8(bytes) {
         Ok(text) => text,
@@ -69,10 +87,16 @@ fn parse_input<'a>(env: Env<'a>, input: Binary<'a>, schema: Atom) -> NifResult<T
         Schema::Core
     };
 
+    // :ast, or {:plain, enable_merge}
+    let mode = match mode.decode::<(Atom, bool)>() {
+        Ok((tag, merge)) if tag == atoms::plain() => Mode::Plain { merge },
+        _ => Mode::Ast,
+    };
+
     // A byte order mark isn't part of the content
     let yaml = yaml.strip_prefix('\u{feff}').unwrap_or(yaml);
     // Events are pulled one by one, since the parser's own loader recurses once per nesting level
-    let mut builder = Builder::new(env, schema, yaml);
+    let mut builder = Builder::new(env, schema, mode, yaml);
     let mut scan_error = None;
     for item in Parser::new_from_str(yaml) {
         match item {
@@ -116,7 +140,7 @@ enum Frame<'a> {
         anchor: usize,
     },
     Map {
-        pairs: Vec<Term<'a>>,
+        pairs: Vec<(Term<'a>, Term<'a>)>,
         key: Option<Term<'a>>,
         size: usize,
         tag: Term<'a>,
@@ -131,6 +155,7 @@ struct Builder<'a> {
     source: Source<'a>,
     last_end: Marker,
     schema: Schema,
+    mode: Mode,
     stack: Vec<Frame<'a>>,
     documents: Vec<Term<'a>>,
     // Each anchored node with its number of values
@@ -154,7 +179,7 @@ struct Tags<'a> {
 }
 
 impl<'a> Builder<'a> {
-    fn new(env: Env<'a>, schema: Schema, yaml: &'a str) -> Self {
+    fn new(env: Env<'a>, schema: Schema, mode: Mode, yaml: &'a str) -> Self {
         let t = |name: &str| format!("{YAML_TAG}{name}").encode(env);
 
         Builder {
@@ -162,6 +187,7 @@ impl<'a> Builder<'a> {
             source: Source::new(yaml),
             last_end: Marker::new(0, 1, 0),
             schema,
+            mode,
             stack: Vec::new(),
             documents: Vec::new(),
             anchors: HashMap::new(),
@@ -208,6 +234,38 @@ impl<'a> Builder<'a> {
         }
     }
 
+    // Merged pairs come first, so the mapping's own keys win, and earlier merged maps win over later ones
+    fn plain_map(&self, pairs: Vec<(Term<'a>, Term<'a>)>, merge: bool) -> Term<'a> {
+        let is_merge = |k: &Term| k.decode::<Binary>().is_ok_and(|b| b.as_slice() == b"<<");
+        let mut entries = Vec::with_capacity(pairs.len());
+        if merge {
+            for (_, value) in pairs.iter().filter(|(k, _)| is_merge(k)) {
+                let maps = match value.decode::<Vec<Term>>() {
+                    Ok(items) => items,
+                    Err(_) => vec![*value],
+                };
+                for map in maps.iter().rev().filter_map(|map| MapIterator::new(*map)) {
+                    entries.extend(map);
+                }
+            }
+        }
+        for (key, value) in pairs {
+            if !(merge && is_merge(&key)) {
+                entries.push((key, value));
+            }
+        }
+
+        let (keys, values): (Vec<_>, Vec<_>) = entries.into_iter().unzip();
+        // Duplicate keys keep the last value
+        Term::map_from_term_arrays(self.env, &keys, &values).unwrap_or_else(|_| {
+            keys.iter()
+                .zip(&values)
+                .fold(Term::map_new(self.env), |map, (k, v)| {
+                    map.map_put(*k, *v).expect("a map")
+                })
+        })
+    }
+
     fn fail(&mut self, message: String, mark: Marker) {
         if self.error.is_none() {
             self.error = Some((message, mark.line(), mark.col() + 1));
@@ -238,6 +296,7 @@ impl<'a> Builder<'a> {
         }
 
         match self.stack.last_mut() {
+            None if self.mode != Mode::Ast => self.documents.push(node),
             None => {
                 let document = self.strukt(atoms::document(), &[atoms::root()], &[node]);
                 self.documents.push(document);
@@ -252,7 +311,7 @@ impl<'a> Builder<'a> {
                 *size += node_size;
                 match key.take() {
                     None => *key = Some(node),
-                    Some(k) => pairs.push((k, node).encode(self.env)),
+                    Some(k) => pairs.push((k, node)),
                 }
             }
         }
@@ -267,6 +326,10 @@ impl<'a> Builder<'a> {
         mark: Marker,
     ) {
         match resolve(self.env, &self.tags, self.schema, text, style, tag) {
+            Ok((_, value)) if self.mode != Mode::Ast => {
+                self.written += 1;
+                self.add(value, 1, anchor, mark);
+            }
             Ok((tag, value)) => {
                 let meta = self.meta(tag, mark);
                 let node = self.strukt(
@@ -333,14 +396,18 @@ impl<'input> SpannedEventReceiver<'input> for Builder<'_> {
                     anchor,
                 }) = self.stack.pop()
                 {
-                    let meta = self.meta(tag, mark);
-                    let count = items.len().encode(self.env);
-                    let items = items.encode(self.env);
-                    let node = self.strukt(
-                        atoms::list(),
-                        &[atoms::items(), atoms::meta(), atoms::length()],
-                        &[items, meta, count],
-                    );
+                    let node = if self.mode != Mode::Ast {
+                        items.encode(self.env)
+                    } else {
+                        let meta = self.meta(tag, mark);
+                        let count = items.len().encode(self.env);
+                        let items = items.encode(self.env);
+                        self.strukt(
+                            atoms::list(),
+                            &[atoms::items(), atoms::meta(), atoms::length()],
+                            &[items, meta, count],
+                        )
+                    };
                     self.written += 1;
                     self.add(node, size, anchor, mark);
                 }
@@ -355,13 +422,18 @@ impl<'input> SpannedEventReceiver<'input> for Builder<'_> {
                     ..
                 }) = self.stack.pop()
                 {
-                    let meta = self.meta(tag, mark);
-                    let pairs = pairs.encode(self.env);
-                    let node = self.strukt(
-                        atoms::mapping(),
-                        &[atoms::pairs(), atoms::meta()],
-                        &[pairs, meta],
-                    );
+                    let node = match self.mode {
+                        Mode::Plain { merge } => self.plain_map(pairs, merge),
+                        Mode::Ast => {
+                            let meta = self.meta(tag, mark);
+                            let pairs = pairs.encode(self.env);
+                            self.strukt(
+                                atoms::mapping(),
+                                &[atoms::pairs(), atoms::meta()],
+                                &[pairs, meta],
+                            )
+                        }
+                    };
                     self.written += 1;
                     self.add(node, size, anchor, mark);
                 }

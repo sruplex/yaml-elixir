@@ -1151,7 +1151,10 @@ defmodule YAMLTest do
       assert {:ok, documents} = YAML.decode(large, return: :all_documents, detailed: true)
       assert {:ok, [first]} = YAML.decode(doc, return: :all_documents, detailed: true)
       assert hd(documents) == first
-      assert YAML.Native.parse(large, :core) == YAML.Native.parse_dirty(large, :core)
+      assert YAML.Native.parse(large, :core, :ast) == YAML.Native.parse_dirty(large, :core, :ast)
+
+      assert YAML.Native.parse(large, :core, {:plain, true}) ==
+               YAML.Native.parse_dirty(large, :core, {:plain, true})
     end
 
     test "aliases that expand a small file into too many values are an error" do

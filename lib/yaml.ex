@@ -71,7 +71,7 @@ defmodule YAML do
 
   def decode(binary, opts \\ []) when is_binary(binary) do
     with {:ok, opts} <- validate_opts(opts),
-         {:ok, yaml} <- Parser.parse(binary, opts[:schema]) do
+         {:ok, yaml} <- parse(binary, opts) do
       {:ok, apply_options(yaml, opts)}
     end
   end
@@ -159,7 +159,7 @@ defmodule YAML do
       # Line numbers start at the document, so they are moved to match the whole stream
       offset = first_line - 1
 
-      case Parser.parse(text, opts[:schema]) do
+      case parse(text, opts) do
         {:ok, documents} ->
           documents
           |> shift_lines(offset, opts[:detailed])
@@ -518,6 +518,13 @@ defmodule YAML do
     end
   end
 
+  # The AST is only built for detailed: true; otherwise Rust builds the maps and lists
+  defp parse(binary, opts) do
+    if opts[:detailed],
+      do: Parser.parse(binary, opts[:schema]),
+      else: Parser.decode(binary, opts[:schema], opts[:enable_merge])
+  end
+
   @option_priority %{
     enable_merge: 1,
     detailed: 2,
@@ -536,8 +543,8 @@ defmodule YAML do
       {:return, :first_document}, [] -> nil
       {:return, :first_document}, [first | _] -> first
       {:detailed, true}, yaml -> yaml
-      {:detailed, false}, yaml -> Parser.simplify(yaml, opts[:atomize_keys])
-      {:enable_merge, true}, yaml -> Merge.apply(yaml)
+      {:detailed, false}, yaml -> Parser.atomize_keys(yaml, opts[:atomize_keys])
+      {:enable_merge, true}, yaml -> if opts[:detailed], do: Merge.apply(yaml), else: yaml
       {:enable_merge, false}, yaml -> yaml
       {:atomize_keys, _}, yaml -> yaml
       {:as, template}, yaml -> Enum.map(yaml, &Decode.as(&1, template))

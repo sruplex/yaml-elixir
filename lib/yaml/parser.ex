@@ -34,10 +34,20 @@ defmodule YAML.Parser do
   """
 
   def parse(string, schema \\ :core) when is_binary(string) and schema in @schemas do
+    run(string, schema, :ast)
+  end
+
+  # Decodes straight to maps and lists, with merge keys resolved in Rust
+  @doc false
+  def decode(string, schema, enable_merge) do
+    run(string, schema, {:plain, enable_merge})
+  end
+
+  defp run(string, schema, mode) do
     result =
       if byte_size(string) < @dirty_size,
-        do: Native.parse(string, schema),
-        else: Native.parse_dirty(string, schema)
+        do: Native.parse(string, schema, mode),
+        else: Native.parse_dirty(string, schema, mode)
 
     case result do
       {:ok, documents} -> {:ok, documents}
@@ -96,6 +106,19 @@ defmodule YAML.Parser do
   end
 
   def simplify(value, _atomize_keys), do: value
+
+  # Turns the keys of decoded maps into atoms, as the :atomize_keys option does
+  @doc false
+  def atomize_keys(data, mode) when mode in [false, nil], do: data
+
+  def atomize_keys(map, mode) when is_map(map) do
+    Map.new(map, fn {key, value} ->
+      {key |> atomize_keys(mode) |> atomize_key(mode), atomize_keys(value, mode)}
+    end)
+  end
+
+  def atomize_keys(list, mode) when is_list(list), do: Enum.map(list, &atomize_keys(&1, mode))
+  def atomize_keys(value, _mode), do: value
 
   defp atomize_key(key, false) when is_binary(key), do: key
   defp atomize_key(key, nil) when is_binary(key), do: key
