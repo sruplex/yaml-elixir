@@ -6,20 +6,12 @@ defmodule YAML do
   alias YAML.Merge
   alias YAML.Encode
   alias YAML.Decode
-  alias YAML.Splitter
   alias YAML.ArgumentError
   alias YAML.EncodeError
   alias YAML.ParsingError
-  alias YAML.AST.{Document, Scalar, List, Mapping, Meta}
-
-  @valid_yamerl_opts [
-    :schema,
-    :node_mods,
-    :keep_duplicate_keys
-  ]
+  alias YAML.AST.Document
 
   @valid_schema_values [:failsafe, :json, :core, :yaml11]
-  @valid_map_node_format_values [:map, :proplist]
 
   @doc """
    Decodes YAML strings into Elixir data structures or AST.
@@ -55,13 +47,7 @@ defmodule YAML do
       default value is the template for its value, so `%User{address: %Address{}}` decodes
       nested structs. Not supported with `detailed: true`.
 
-    * `:yamerl_opts` - list of additional options passed directly to `:yamerl_constr`
-      (default: `[]`). Note: `:str_node_as_binary` and `:detailed_constr` are always
-      set internally and should not be passed here.
-
-        * `{:schema, :failsafe | :json | :core | :yaml11}` - YAML schema for type resolution (default: `:core`)
-        * `{:node_mods, [module()]}` - extra modules for custom node types (default: `[]`)
-        * `{:keep_duplicate_keys, boolean()}` - preserve duplicate map keys (default: `false`)
+    * `:schema` - how plain scalars are typed: `:core`, `:yaml11`, `:json` or `:failsafe` (default: `:core`)
 
   ## Examples
 
@@ -74,8 +60,8 @@ defmodule YAML do
       iex> YAML.decode("a: 1", return: :first_document)
       {:ok, %{"a" => 1}}
 
-      iex> YAML.decode("a: 1", yamerl_opts: [{:schema, :core}, {:map_node_format, :map}])
-      {:ok, %{"a" => 1}}
+      iex> YAML.decode("a: yes", schema: :yaml11)
+      {:ok, %{"a" => true}}
 
       iex> YAML.decode("path: /home\\nport: 80", as: %URI{})
       {:ok, %URI{path: "/home", port: 80}}
@@ -84,8 +70,7 @@ defmodule YAML do
 
   def decode(binary, opts \\ []) when is_binary(binary) do
     with {:ok, opts} <- validate_opts(opts),
-         yamerl_opts = Keyword.get(opts, :yamerl_opts, []),
-         {:ok, yaml} <- Parser.parse(binary, yamerl_opts) do
+         {:ok, yaml} <- parse(binary, opts) do
       {:ok, apply_options(yaml, opts)}
     end
   end
@@ -167,22 +152,13 @@ defmodule YAML do
         {:error, error} -> raise error
       end
 
+    mode = if opts[:detailed], do: :ast, else: {:plain, opts[:enable_merge]}
+
     enumerable
-    |> Splitter.split()
-    |> Stream.flat_map(fn {text, first_line} ->
-      # Line numbers start at the document, so they are moved to match the whole stream
-      offset = first_line - 1
-
-      case Parser.parse(text, opts[:yamerl_opts]) do
-        {:ok, documents} ->
-          documents
-          |> shift_lines(offset, opts[:detailed])
-          |> apply_options(opts)
-          |> Enum.map(&{:ok, &1})
-
-        {:error, error} ->
-          [{:error, shift_error(error, offset)}]
-      end
+    |> Parser.stream(opts[:schema], mode)
+    |> Stream.flat_map(fn
+      {:ok, documents} -> documents |> apply_options(opts) |> Enum.map(&{:ok, &1})
+      {:error, error} -> [{:error, error}]
     end)
   end
 
@@ -204,38 +180,6 @@ defmodule YAML do
       {:error, error} -> raise error
     end)
   end
-
-  defp shift_lines(documents, 0, _detailed), do: documents
-  defp shift_lines(documents, _offset, false), do: documents
-  defp shift_lines(documents, offset, true), do: Enum.map(documents, &shift_node(&1, offset))
-
-  defp shift_node(%Document{root: root} = document, offset),
-    do: %{document | root: shift_node(root, offset)}
-
-  defp shift_node(%Mapping{pairs: pairs, meta: meta} = node, offset) do
-    pairs =
-      Enum.map(pairs, fn {key, value} -> {shift_node(key, offset), shift_node(value, offset)} end)
-
-    %{node | pairs: pairs, meta: shift_meta(meta, offset)}
-  end
-
-  defp shift_node(%List{items: items, meta: meta} = node, offset),
-    do: %{node | items: Enum.map(items, &shift_node(&1, offset)), meta: shift_meta(meta, offset)}
-
-  defp shift_node(%Scalar{meta: meta} = node, offset),
-    do: %{node | meta: shift_meta(meta, offset)}
-
-  defp shift_node(node, _offset), do: node
-
-  defp shift_meta(%Meta{line: line} = meta, offset) when is_integer(line),
-    do: %{meta | line: line + offset}
-
-  defp shift_meta(meta, _offset), do: meta
-
-  defp shift_error(%ParsingError{location: {line, column}} = error, offset) when is_integer(line),
-    do: %{error | location: {line + offset, column}}
-
-  defp shift_error(error, _offset), do: error
 
   @doc """
   Encodes Elixir data, a YAML AST document or a list of documents into YAML.
@@ -452,7 +396,7 @@ defmodule YAML do
     detailed: false,
     enable_merge: true,
     atomize_keys: false,
-    yamerl_opts: []
+    schema: :core
   ]
 
   defp validate_opts(opts) do
@@ -501,14 +445,17 @@ defmodule YAML do
           {:halt, {:error, error}}
         end
 
-      {:yamerl_opts, v}, {:ok, acc} when is_list(v) ->
-        case validate_yamerl_opts(v) do
-          :ok -> {:cont, {:ok, [{:yamerl_opts, v} | acc]}}
-          {:error, _} = error -> {:halt, error}
-        end
+      {:schema, v} = opt, {:ok, acc} when v in @valid_schema_values ->
+        {:cont, {:ok, [opt | acc]}}
 
-      {:yamerl_opts, v}, {:ok, _acc} ->
-        error = ArgumentError.invalid_option(:yamerl_opts, v, "must be a list")
+      {:schema, v}, {:ok, _acc} ->
+        error =
+          ArgumentError.invalid_option(
+            :schema,
+            v,
+            "must be one of #{inspect(@valid_schema_values)}"
+          )
+
         {:halt, {:error, error}}
 
       {key, val}, {:ok, _acc} ->
@@ -529,58 +476,11 @@ defmodule YAML do
     end
   end
 
-  defp validate_yamerl_opts(yamerl_opts) do
-    Enum.reduce_while(yamerl_opts, :ok, fn
-      {:schema, v}, :ok when v in @valid_schema_values ->
-        {:cont, :ok}
-
-      {:schema, v}, :ok ->
-        error =
-          ArgumentError.invalid_option(
-            :schema,
-            v,
-            "must be one of #{inspect(@valid_schema_values)}"
-          )
-
-        {:halt, {:error, error}}
-
-      {:node_mods, v}, :ok when is_list(v) ->
-        {:cont, :ok}
-
-      {:node_mods, v}, :ok ->
-        error = ArgumentError.invalid_option(:node_mods, v, "must be a list of modules")
-        {:halt, {:error, error}}
-
-      {:map_node_format, v}, :ok when v in @valid_map_node_format_values ->
-        {:cont, :ok}
-
-      {:keep_duplicate_keys, v}, :ok when is_boolean(v) ->
-        {:cont, :ok}
-
-      {:keep_duplicate_keys, v}, :ok ->
-        error = ArgumentError.invalid_option(:keep_duplicate_keys, v, "must be a boolean")
-        {:halt, {:error, error}}
-
-      {key, _}, :ok ->
-        error =
-          ArgumentError.invalid_option(
-            key,
-            nil,
-            "unknown yamerl option. Must be one of #{inspect(@valid_yamerl_opts)}"
-          )
-
-        {:halt, {:error, error}}
-
-      opt, :ok ->
-        error =
-          ArgumentError.invalid_option(
-            opt,
-            nil,
-            "invalid yamerl option, expected a {key, value} tuple"
-          )
-
-        {:halt, {:error, error}}
-    end)
+  # The AST is only built for detailed: true; otherwise Rust builds the maps and lists
+  defp parse(binary, opts) do
+    if opts[:detailed],
+      do: Parser.parse(binary, opts[:schema]),
+      else: Parser.decode(binary, opts[:schema], opts[:enable_merge])
   end
 
   @option_priority %{
@@ -601,12 +501,12 @@ defmodule YAML do
       {:return, :first_document}, [] -> nil
       {:return, :first_document}, [first | _] -> first
       {:detailed, true}, yaml -> yaml
-      {:detailed, false}, yaml -> Parser.simplify(yaml, opts[:atomize_keys])
-      {:enable_merge, true}, yaml -> Merge.apply(yaml)
+      {:detailed, false}, yaml -> Parser.atomize_keys(yaml, opts[:atomize_keys])
+      {:enable_merge, true}, yaml -> if opts[:detailed], do: Merge.apply(yaml), else: yaml
       {:enable_merge, false}, yaml -> yaml
       {:atomize_keys, _}, yaml -> yaml
       {:as, template}, yaml -> Enum.map(yaml, &Decode.as(&1, template))
-      {:yamerl_opts, _}, yaml -> yaml
+      {:schema, _}, yaml -> yaml
     end)
   end
 end
