@@ -228,7 +228,7 @@ defmodule YAMLTest do
                     },
                     %YAML.AST.Scalar{
                       value: "Hello WORLD",
-                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:binary", line: 23, column: 14}
+                      meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:binary", line: 23, column: 23}
                     }},
                    {%YAML.AST.Scalar{
                       value: "skills",

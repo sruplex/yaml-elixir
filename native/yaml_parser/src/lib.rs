@@ -656,6 +656,8 @@ struct Frame {
     size: usize,
     tag: Cow<'static, str>,
     mark: Marker,
+    // Where the node starts with its anchor and tag, for its parent's position
+    outer: Option<Marker>,
     anchor: usize,
 }
 
@@ -764,19 +766,21 @@ impl<'t> Builder<'t> {
     }
 
     fn add(&mut self, start: usize, node_size: usize, anchor: usize, mark: Marker) {
+        let source = &mut self.source;
         let end = self.out.len();
         if anchor != 0 {
             self.anchors
                 .insert(anchor, (self.out[start..end].to_vec(), node_size, None));
         }
 
-        // A sequence starts at the "-" or "[" before its first item; a mapping at its first key,
-        // or the "{" or "?" before it
-        if self.ast() {
+        // A block sequence starts at the "-" before its first item; a block mapping at its first key,
+        // or the "?" before it; a flow collection keeps its "[" or "{"
+        if self.mode == Mode::Ast {
             let found = match self.stack.last() {
-                Some(f) if !f.map && f.count == 0 => self.source.before(mark, b"-["),
+                Some(f) if source.at(f.mark).is_some_and(|c| c == b'[' || c == b'{') => None,
+                Some(f) if !f.map && f.count == 0 => source.before(mark, b"-["),
                 Some(f) if f.map && f.count == 0 && f.key.is_none() => {
-                    Some(self.source.before(mark, b"{?").unwrap_or(mark))
+                    Some(source.before(mark, b"{?").unwrap_or(mark))
                 }
                 _ => None,
             };
@@ -881,6 +885,7 @@ impl<'t> Builder<'t> {
         anchor: usize,
         tag: Option<&Tag>,
         mark: Marker,
+        outer: Marker,
     ) {
         match resolve(self.schema, text, style, tag) {
             Ok((tag, value)) => {
@@ -894,13 +899,20 @@ impl<'t> Builder<'t> {
                     write_value(&mut self.out, &value);
                 }
                 self.written += 1;
-                self.add(start, 1, anchor, mark);
+                self.add(start, 1, anchor, outer);
             }
             Err(message) => self.fail(message, mark),
         }
     }
 
-    fn open(&mut self, map: bool, tag: Cow<'static, str>, mark: Marker, anchor: usize) {
+    fn open(
+        &mut self,
+        map: bool,
+        tag: Cow<'static, str>,
+        mark: Marker,
+        outer: Option<Marker>,
+        anchor: usize,
+    ) {
         let start = self.begin();
         let count_at = match (self.ast(), map) {
             (true, false) => {
@@ -926,6 +938,7 @@ impl<'t> Builder<'t> {
             size: 1,
             tag,
             mark,
+            outer,
             anchor,
         });
     }
@@ -935,6 +948,7 @@ impl<'t> Builder<'t> {
             return;
         };
         let (start, size, anchor, mark) = (frame.start, frame.size, frame.anchor, frame.mark);
+        let outer = frame.outer.unwrap_or(mark);
         match self.mode {
             Mode::Plain { merge } if frame.map => self.plain_map(frame, merge),
             _ => {
@@ -950,7 +964,7 @@ impl<'t> Builder<'t> {
             }
         }
         self.written += 1;
-        self.add(start, size, anchor, mark);
+        self.add(start, size, anchor, outer);
     }
 }
 
@@ -962,30 +976,52 @@ impl<'input> SpannedEventReceiver<'input> for Builder<'_> {
 
         let mark = span.start;
         let from = std::mem::replace(&mut self.last_end, span.end);
+        let map = matches!(event, Event::MappingStart(..));
         match event {
             Event::Scalar(text, style, anchor, tag) => {
+                let properties = anchor != 0 || tag.is_some();
                 // A block scalar starts at its "|" or ">", not at its first line of text
-                // An empty value sits right after the token before it
-                let mark = match style {
+                // An empty value sits at the token after it, or at its tag; an empty last document
+                // sits right after its "---"
+                // Any other value starts after its anchor and tag
+                let at = match style {
+                    ScalarStyle::Literal | ScalarStyle::Folded if properties => {
+                        self.source.past_properties(mark)
+                    }
                     ScalarStyle::Literal | ScalarStyle::Folded => {
                         self.source.find(from, mark, b"|>").unwrap_or(mark)
                     }
-                    ScalarStyle::Plain if text.is_empty() && tag.is_none() => from,
+                    ScalarStyle::Plain if text.is_empty() && tag.is_none() => {
+                        if self.stack.is_empty() && self.source.at(mark).is_none() {
+                            from
+                        } else {
+                            mark
+                        }
+                    }
+                    _ if properties && !text.is_empty() => self.source.past_properties(mark),
                     _ => mark,
                 };
-                self.scalar(&text, style, anchor, tag.as_deref(), mark)
+                let outer = if properties { mark } else { at };
+                self.scalar(&text, style, anchor, tag.as_deref(), at, outer)
             }
-            Event::SequenceStart(anchor, tag) => {
-                let tag = self.collection_tag(tag.as_deref(), SEQ);
-                self.open(false, tag, mark, anchor);
-            }
-            Event::MappingStart(anchor, tag) => {
-                let tag = self.collection_tag(tag.as_deref(), MAP);
-                self.open(true, tag, mark, anchor);
+            Event::SequenceStart(anchor, tag) | Event::MappingStart(anchor, tag) => {
+                let (at, outer) = if anchor != 0 || tag.is_some() {
+                    (self.source.past_properties(mark), Some(mark))
+                } else {
+                    (mark, None)
+                };
+                let tag = self.collection_tag(tag.as_deref(), if map { MAP } else { SEQ });
+                self.open(map, tag, at, outer, anchor);
             }
             Event::SequenceEnd | Event::MappingEnd => self.close(),
             // An anchor only belongs to its own document
-            Event::DocumentStart(_) => self.anchors.clear(),
+            Event::DocumentStart(explicit) => {
+                self.anchors.clear();
+                // An implicit start has no token, so a block scalar searches from the token before it
+                if !explicit {
+                    self.last_end = from;
+                }
+            }
             Event::Alias(id) => match self.anchors.get_mut(&id) {
                 Some((bytes, size, index)) => {
                     let size = *size;
@@ -1064,6 +1100,55 @@ impl<'a> Source<'a> {
         }
         self.cursor = (line, col, byte);
         Some(byte)
+    }
+
+    // The byte at a position
+    fn at(&mut self, at: Marker) -> Option<u8> {
+        let i = self.offset(at.line(), at.col())?;
+        self.text.get(i).copied()
+    }
+
+    // Where a node's content starts, past its anchor and tag, as yamerl gave it
+    fn past_properties(&mut self, at: Marker) -> Marker {
+        let Some(mut i) = self.offset(at.line(), at.col()) else {
+            return at;
+        };
+        let mut line = at.line();
+        let mut start = self.line_start(line).unwrap_or(0);
+        loop {
+            match self.text.get(i) {
+                Some(b'!') if self.text.get(i + 1) == Some(&b'<') => {
+                    while self.text.get(i).is_some_and(|&c| c != b'>') {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                Some(b'&' | b'!') => {
+                    while self
+                        .text
+                        .get(i)
+                        .is_some_and(|c| !b" \t\r\n,[]{}".contains(c))
+                    {
+                        i += 1;
+                    }
+                }
+                Some(b' ' | b'\t' | b'\r') => i += 1,
+                Some(b'\n') => {
+                    i += 1;
+                    line += 1;
+                    start = i;
+                }
+                Some(b'#') => {
+                    while self.text.get(i).is_some_and(|&c| c != b'\n') {
+                        i += 1;
+                    }
+                }
+                _ => break,
+            }
+        }
+        let col =
+            std::str::from_utf8(&self.text[start..i]).map_or(i - start, |s| s.chars().count());
+        Marker::new(0, line, col)
     }
 
     // One of `targets` just before a position, with only blanks and line breaks between
