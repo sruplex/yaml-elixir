@@ -1088,23 +1088,125 @@ defmodule YAMLTest do
       assert {:ok, [nil]} = YAML.decode("~", return: :all_documents)
     end
 
-    test "returns error for yamerl options that are not tuples" do
-      for opt <- [:foo, :str_node_as_binary] do
-        assert {:error, %YAML.ArgumentError{option: ^opt, message: message}} =
-                 YAML.decode("a: 1", yamerl_opts: [opt])
-
-        assert message =~ "expected a {key, value} tuple"
+    test "an error at the end of the input is at the end of the last line" do
+      for yaml <- ["a: [1, 2", "a: [1, 2\n", "x: 1\na: {k: 1", "x: 1\r\na: {k: 1\r\n"] do
+        line = if String.starts_with?(yaml, "x"), do: 2, else: 1
+        assert {:error, %YAML.ParsingError{location: {^line, 9}}} = YAML.decode(yaml)
       end
     end
 
-    test "returns error when yamerl's parser crashes" do
-      # Valid YAML that yamerl crashes on
-      yaml = "a:\n  - {{ x }}\nb:\n  - 1\n"
+    test "reads numbers as the YAML 1.2 core and YAML 1.1 schemas type them" do
+      for {text, core, yaml11} <- [
+            {"+0o7", "+0o7", "+0o7"},
+            {"-0x1F", "-0x1F", -31},
+            {"0x", "0x", "0x"},
+            {"0b", "0b", "0b"},
+            {"1e3", 1000.0, "1e3"},
+            {"0.1e1", 1.0, "0.1e1"},
+            {"0.1e+1", 1.0, 1.0},
+            {"685_230.15", "685_230.15", 685_230.15},
+            {"685.230_15e+03", "685.230_15e+03", 685_230.15},
+            {".1_0", ".1_0", 0.1}
+          ] do
+        assert YAML.decode!("k: " <> text)["k"] == core, "core #{text}"
+        assert YAML.decode!("k: " <> text, schema: :yaml11)["k"] == yaml11, "yaml11 #{text}"
+      end
+    end
 
-      assert {:error, %YAML.ParsingError{type: :parse_error, location: nil} = error} =
-               YAML.decode(yaml)
+    test "a JSON float too large for a float is an error" do
+      assert {:error, %YAML.ParsingError{message: "invalid float"}} =
+               YAML.decode("1e400", schema: :json)
+    end
 
-      assert_raise YAML.ParsingError, error.message, fn -> YAML.decode!(yaml) end
+    test "an alias to an anchor in an earlier document is an error" do
+      assert {:error, %YAML.ParsingError{message: "unknown anchor"}} =
+               YAML.decode("--- &a 1\n--- *a\n", return: :all_documents)
+    end
+
+    test "!!int reads integers in any base" do
+      for {text, int} <- [
+            {"12", 12},
+            {"+12", 12},
+            {"0x1F", 31},
+            {"-0x1F", -31},
+            {"0o17", 15},
+            {"1_000", 1000}
+          ] do
+        assert YAML.decode!("k: !!int " <> text)["k"] == int, text
+      end
+
+      assert {:error, %YAML.ParsingError{message: "invalid integer"}} =
+               YAML.decode("k: !!int 1.5")
+    end
+
+    test "YAML.Parser.parse/2 takes a schema atom" do
+      assert {:ok, [%YAML.AST.Document{root: %{value: true}}]} = YAML.Parser.parse("yes", :yaml11)
+    end
+
+    test "small and large inputs decode the same" do
+      doc = "a: [1, 2]\nb: {c: d}\n"
+      large = String.duplicate(doc <> "---\n", 1_000)
+      assert byte_size(doc) < 2_000 and byte_size(large) > 2_000
+
+      assert {:ok, documents} = YAML.decode(large, return: :all_documents, detailed: true)
+      assert {:ok, [first]} = YAML.decode(doc, return: :all_documents, detailed: true)
+      assert hd(documents) == first
+      assert hd(YAML.decode!(large, return: :all_documents)) == YAML.decode!(doc)
+    end
+
+    test "a large input is parsed a slice at a time" do
+      huge = String.duplicate("---\na: [1, 2]\nb: {c: d}\n", 50_000)
+      assert {:cont, _job} = YAML.Native.parse(huge, :core, :ast)
+      assert length(YAML.decode!(huge, return: :all_documents)) == 50_000
+    end
+
+    test "aliases share their anchor's value instead of copying it" do
+      text = String.duplicate("x", 100_000)
+
+      yaml =
+        "a: &a #{text}\nm: &m {k: [1, 2]}\nb: [#{Enum.map_join(1..1_000, ", ", fn _ -> "*a" end)}]\nc: [*m, *m]\n"
+
+      assert {:ok, %{"a" => a, "b" => b, "m" => m, "c" => [m1, m2]}} = YAML.decode(yaml)
+      assert length(b) == 1_000 and Enum.all?(b, &:erts_debug.same(&1, hd(b)))
+      assert hd(b) == a and m1 == m and :erts_debug.same(m1, m2)
+    end
+
+    test "aliases that expand a small file into too many values are an error" do
+      first = "a: &a [x, x, x, x, x, x, x, x, x, x]\n"
+
+      bomb =
+        Enum.map_join(?b..?h, "", fn c ->
+          "#{<<c>>}: &#{<<c>>} [#{Enum.map_join(1..10, ", ", fn _ -> "*#{<<c - 1>>}" end)}]\n"
+        end)
+
+      assert {:error, %YAML.ParsingError{message: "aliases expand to too many values"}} =
+               YAML.decode(first <> bomb)
+    end
+
+    test "many aliases in a large file are not an error" do
+      yaml =
+        "defaults: &d {a: 1, b: 2}\nitems:\n" <>
+          Enum.map_join(1..50_000, "", &"  - {id: #{&1}, n: 1, m: 2, o: 3}\n  - *d\n")
+
+      assert {:ok, %{"items" => items}} = YAML.decode(yaml)
+      assert length(items) == 100_000
+    end
+
+    test "invalid UTF-8 is an error at the first bad byte" do
+      assert {:error, %YAML.ParsingError{message: "invalid UTF-8", location: {1, 7}}} =
+               YAML.decode(<<"a: caf", 0xE9, "\n">>)
+
+      assert {:error, %YAML.ParsingError{location: {2, 6}}} =
+               YAML.decode(<<"x: 1\nb: 日本", 0xE6, 0x97, "\n">>)
+    end
+
+    test "a list entry on a key's line is an error" do
+      assert {:error, %YAML.ParsingError{location: {1, 4}}} = YAML.decode("k: -")
+    end
+
+    test "returns error for an invalid :schema option" do
+      assert {:error, %YAML.ArgumentError{option: :schema, value: :yaml12}} =
+               YAML.decode("a: 1", schema: :yaml12)
     end
 
     test "returns error for invalid :return option", %{yaml: yaml} do
@@ -1205,6 +1307,19 @@ defmodule YAMLTest do
              }
     end
 
+    test "enable_merge: true -- merges maps holding any value" do
+      yaml =
+        "base: &b\n  big: 123456789012345678901234567890\n  atom: .inf\n  list: [1, [2]]\nx:\n  <<: *b\n  y: 1\n"
+
+      base = %{
+        "big" => 123_456_789_012_345_678_901_234_567_890,
+        "atom" => :"+inf",
+        "list" => [1, [2]]
+      }
+
+      assert YAML.decode!(yaml) == %{"base" => base, "x" => Map.put(base, "y", 1)}
+    end
+
     test "enable_merge: true -- respects merge order", %{merge_yaml: merge_yaml} do
       assert {:ok, result} = YAML.decode(merge_yaml)
       assert {:ok, ^result} = YAML.decode(merge_yaml, enable_merge: true)
@@ -1256,15 +1371,7 @@ defmodule YAMLTest do
                    "name" => "node_4",
                    "critical" => false,
                    "timeout" => 100,
-                   # NOTE: Yamerl parser limitation - when multiple << keys appear in sequence:
-                   #   <<: *service_y
-                   #   <<: *service_x
-                   # Yamerl only processes the last << key (*service_x) and ignores the rest.
-                   # This means keys from service_y (like "elixir") won't be included, but
-                   # keys from service_x (like "javascript") will be present in the merged result.
-                   #
-                   # Workaround: Use array syntax instead: <<: [*service_x, *service_y]
-                   # "elixir" => "phoenix",
+                   "elixir" => "phoenix",
                    "javascript" => "nodejs"
                  },
                  "node_5" => %{
@@ -1465,11 +1572,11 @@ defmodule YAMLTest do
                Enum.map(1..40, &"k#{String.pad_leading(Integer.to_string(&1), 2, "0")}: #{&1}")
     end
 
-    test "sort_maps: true also sorts keys written in flow style" do
+    test "sort_maps: true also sorts the keys of a map key" do
       value = %{%{[1] => 1, z: 2, a: 3} => 1}
 
       assert YAML.encode(value, sort_maps: true) ==
-               {:ok, ~s(---\n? {[1]: 1, "a": 3, "z": 2}\n: 1\n)}
+               {:ok, "---\n? ? - 1\n  : 1\n  a: 3\n  z: 2\n: 1\n"}
     end
 
     test "without sort_maps, map keys follow Elixir's map order" do
@@ -1676,13 +1783,13 @@ defmodule YAMLTest do
       assert {3, _column} = error.location
     end
 
-    test "yields an error for a document that crashes yamerl and keeps going" do
+    test "yields an error for an unclosed flow map and keeps going" do
       assert [{:error, %YAML.ParsingError{}}, {:ok, %{"b" => 1}}] =
                ["d: {x\n---\nb: 1\n"] |> YAML.decode_stream() |> Enum.to_list()
     end
 
     test "a --- line in a quoted string ends the document, per the YAML spec" do
-      assert [{:error, %YAML.ParsingError{location: {2, 1}}}, {:ok, "y\""}] =
+      assert [{:error, %YAML.ParsingError{location: {1, 4}}}, {:ok, "y\""}] =
                [~s(a: "x\n---\ny")] |> YAML.decode_stream() |> Enum.to_list()
     end
 
@@ -1761,7 +1868,7 @@ defmodule YAMLTest do
       for opts <- [
             [atomize_keys: true],
             [enable_merge: false],
-            [yamerl_opts: [schema: :yaml11]],
+            [schema: :yaml11],
             [detailed: true]
           ] do
         assert stream(yaml, opts) == YAML.decode!(yaml, [return: :all_documents] ++ opts)

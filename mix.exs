@@ -19,7 +19,7 @@ defmodule YAML.MixProject do
       # Project
       app: @app,
       version: @version,
-      elixir: "~> 1.14",
+      elixir: "~> 1.16",
       description: description(),
       package: package(),
       deps: deps(),
@@ -46,7 +46,9 @@ defmodule YAML.MixProject do
   # Dependencies
   defp deps do
     [
-      {:yamerl, "~> 0.10.0"},
+      {:rustler_precompiled, "~> 0.10.1", runtime: false},
+      # Only needed to build the native library from source, with YAML_BUILD=true
+      {:rustler, "~> 0.38.0", optional: true, runtime: false},
       {:ex_doc, ">= 0.0.0", only: :docs},
       {:inch_ex, ">= 0.0.0", only: :docs}
     ]
@@ -67,7 +69,11 @@ defmodule YAML.MixProject do
       name: @app,
       maintainers: ["Sruplex", "Sheharyar Naseer"],
       licenses: ["MIT"],
-      files: ~w(mix.exs lib README.md CHANGELOG.md),
+      files: ~w(
+        mix.exs lib README.md CHANGELOG.md checksum-Elixir.YAML.Native.exs
+        native/yaml_parser/src native/yaml_parser/Cargo.toml native/yaml_parser/Cargo.lock
+        native/yaml_parser/.cargo native/yaml_parser/Cross.toml
+      ),
       links: %{"GitHub" => @github}
     ]
   end

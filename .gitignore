@@ -27,3 +27,7 @@ yaml-*.tar
 
 # Created by ExUnit for tests tagged :tmp_dir
 /tmp/
+
+# Native build output
+/priv/native/
+/native/*/target/

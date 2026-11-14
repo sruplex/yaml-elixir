@@ -1,0 +1,16 @@
+[package]
+name = "yaml_parser"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = { version = "0.38", features = ["big_integer"] }
+num-bigint = "0.4"
+saphyr-parser = "0.3"
+
+[profile.release]
+lto = true
+codegen-units = 1

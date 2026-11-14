@@ -2,11 +2,32 @@
 
 ## Unreleased
 
+### Breaking
+
+- Decoding uses a Rust parser instead of yamerl, and is about 10 times faster. The parser is downloaded
+  prebuilt for macOS, Linux and Windows, so no Rust toolchain is needed. Set `YAML_BUILD=true` to build it from source.
+- Requires Elixir `~> 1.16`, the oldest version `rustler_precompiled` supports. On Elixir 1.14 or 1.15, stay on `{:yaml, "~> 0.3.0"}`.
+- The `:yamerl_opts` option is replaced by `:schema`. Change `yamerl_opts: [schema: :yaml11]` to `schema: :yaml11`.
+- Parse error messages are worded differently.
+- `YAML.Parser.parse/2` and `parse!/2` take a schema atom instead of yamerl options.
+  Change `YAML.Parser.parse(yaml, schema: :yaml11)` to `YAML.Parser.parse(yaml, :yaml11)`.
+- Input must be UTF-8. yamerl also read UTF-16 and UTF-32.
+
 ### Added
 
 - `YAML.Encoder` protocol to encode structs, with `@derive` and its `:only` and `:except` options.
 - `:as` decode option to decode into structs, and a `YAML.Decoder` protocol to decode other data into a struct.
 - `YAML.decode_file/2`, `YAML.encode_file/3` and their `!` versions, to read and write YAML files.
+
+### Fixed
+
+- An alias to a flow map or list gives the whole node, not its first value.
+- A `|+` or `>+` block at the end of the input keeps its last blank lines.
+- Custom tags such as `!thing` are accepted instead of returning an error.
+- Every `<<` key in a map is merged, not only the last one.
+- Aliases that would add over a million values, and over ten times the values written out, return an error,
+  so a small file can't expand into gigabytes of memory.
+- Invalid UTF-8 returns an error with the line and column of the first bad byte.
 
 ## v0.3.0 (2026-11-09)
 
