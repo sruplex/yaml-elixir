@@ -2,7 +2,7 @@ defmodule YAML.DecoderTest do
   use ExUnit.Case, async: true
 
   alias YAML.ArgumentError
-  alias YAML.Support.{Point, User, Team, Money, Order}
+  alias YAML.Support.{Money, Order, Point, Team, User}
 
   @team """
   name: core

@@ -28,6 +28,9 @@ yaml-*.tar
 # Created by ExUnit for tests tagged :tmp_dir
 /tmp/
 
+# Dialyzer's PLT
+/priv/plts/
+
 # Native build output
 /priv/native/
 /native/*/target/

@@ -11,6 +11,7 @@ defmodule YAML.AST do
   defmodule Document do
     @moduledoc false
     defstruct [:root]
+    @type t :: %__MODULE__{root: term()}
   end
 
   defmodule Meta do

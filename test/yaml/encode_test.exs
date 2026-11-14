@@ -1,8 +1,8 @@
 defmodule YAML.EncodeTest do
   use ExUnit.Case, async: true
 
+  alias YAML.AST.{Document, List, Mapping, Meta, Scalar}
   alias YAML.{Encode, EncodeError}
-  alias YAML.AST.{Document, Scalar, List, Mapping, Meta}
 
   defp output(%Document{} = document), do: binary(Encode.document(document))
   defp output([%Document{} | _] = documents), do: binary(Encode.documents(documents))
@@ -68,7 +68,7 @@ defmodule YAML.EncodeTest do
         1.0e20,
         -1.5e17,
         1.0e-5,
-        1.7976931348623157e308,
+        1.797_693_134_862_315_7e308,
         -0.0,
         5.0e-324,
         1.0e16,

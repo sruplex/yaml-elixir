@@ -82,7 +82,7 @@ defmodule YAML.Merge do
   - `timeout` is overridden to 60 (local value wins)
   """
 
-  alias YAML.AST.{Document, Mapping, List, Scalar}
+  alias YAML.AST.{Document, List, Mapping, Scalar}
 
   def apply(%Document{root: root} = doc) do
     %{doc | root: apply(root)}

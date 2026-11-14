@@ -21,7 +21,7 @@ defmodule YAMLTest do
 
       assert doc1 == %{
                "active" => true,
-               "address" => %{"city" => "Lahore", "zip" => 54000},
+               "address" => %{"city" => "Lahore", "zip" => 54_000},
                "age" => 25,
                "binary_data" => "Hello WORLD",
                "created_at" => "2025-01-01T12:30:45Z",
@@ -43,7 +43,7 @@ defmodule YAMLTest do
 
       assert doc1 == %{
                "active" => true,
-               "address" => %{"city" => "Lahore", "zip" => 54000},
+               "address" => %{"city" => "Lahore", "zip" => 54_000},
                "age" => 25,
                "binary_data" => "Hello WORLD",
                "created_at" => "2025-01-01T12:30:45Z",
@@ -271,7 +271,7 @@ defmodule YAMLTest do
                            meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:str", line: 35, column: 3}
                          },
                          %YAML.AST.Scalar{
-                           value: 54000,
+                           value: 54_000,
                            meta: %YAML.AST.Meta{tag: "tag:yaml.org,2002:int", line: 35, column: 8}
                          }}
                       ],
@@ -959,7 +959,7 @@ defmodule YAMLTest do
 
       assert doc1 == %{
                "active" => true,
-               "address" => %{"city" => "Lahore", "zip" => 54000},
+               "address" => %{"city" => "Lahore", "zip" => 54_000},
                "age" => 25,
                "binary_data" => "Hello WORLD",
                "created_at" => "2025-01-01T12:30:45Z",
@@ -1913,7 +1913,7 @@ defmodule YAMLTest do
   # Cuts a string into chunks of `size` bytes, like a file read in blocks
   defp chunked(string, size) do
     whole = div(byte_size(string), size) * size
-    chunks = for <<chunk::binary-size(size) <- binary_part(string, 0, whole)>>, do: chunk
+    chunks = for at <- 0..(whole - 1)//size, do: binary_part(string, at, size)
     chunks ++ [binary_part(string, whole, byte_size(string) - whole)]
   end
 

@@ -24,6 +24,8 @@ defmodule YAML.MixProject do
       package: package(),
       deps: deps(),
       elixirc_paths: elixirc_paths(Mix.env()),
+      # The PLT is kept in priv/plts, so CI can cache it
+      dialyzer: [plt_local_path: "priv/plts", plt_core_path: "priv/plts"],
 
       # ExDoc
       name: @name,
@@ -50,7 +52,9 @@ defmodule YAML.MixProject do
       # Only needed to build the native library from source, with YAML_BUILD=true
       {:rustler, "~> 0.38.0", optional: true, runtime: false},
       {:ex_doc, ">= 0.0.0", only: :docs},
-      {:inch_ex, ">= 0.0.0", only: :docs}
+      {:inch_ex, ">= 0.0.0", only: :docs},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 
