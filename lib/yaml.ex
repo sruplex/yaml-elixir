@@ -47,6 +47,10 @@ defmodule YAML do
       default value is the template for its value, so `%User{address: %Address{}}` decodes
       nested structs. Not supported with `detailed: true`.
 
+    * `:tags` - a map of custom tags to 1-arity functions, such as `%{"!money" => &Decimal.new/1}`.
+      Each tagged value, with scalars as strings, is replaced by the function's result. Errors
+      raised by a function are not caught. Not supported with `detailed: true` (default: `%{}`)
+
     * `:schema` - how plain scalars are typed: `:core`, `:yaml11`, `:json` or `:failsafe` (default: `:core`)
 
   ## Examples
@@ -65,6 +69,9 @@ defmodule YAML do
 
       iex> YAML.decode("path: /home\\nport: 80", as: %URI{})
       {:ok, %URI{path: "/home", port: 80}}
+
+      iex> YAML.decode("ids: !set [1, 1, 2]", tags: %{"!set" => &MapSet.new/1})
+      {:ok, %{"ids" => MapSet.new([1, 2])}}
 
   """
 
@@ -152,7 +159,7 @@ defmodule YAML do
         {:error, error} -> raise error
       end
 
-    mode = if opts[:detailed], do: :ast, else: {:plain, opts[:enable_merge]}
+    mode = if ast?(opts), do: :ast, else: {:plain, opts[:enable_merge]}
 
     enumerable
     |> Parser.stream(opts[:schema], mode)
@@ -396,7 +403,8 @@ defmodule YAML do
     detailed: false,
     enable_merge: true,
     atomize_keys: false,
-    schema: :core
+    schema: :core,
+    tags: %{}
   ]
 
   defp validate_opts(opts) do
@@ -445,6 +453,28 @@ defmodule YAML do
           {:halt, {:error, error}}
         end
 
+      {:tags, v} = opt, {:ok, acc} when is_map(v) ->
+        # Core tags such as "!!str" are given in full form to every plain value, so they're refused
+        if Enum.all?(v, fn {tag, fun} ->
+             is_binary(tag) and not String.starts_with?(tag, ["!!", "tag:yaml.org,2002:"]) and
+               is_function(fun, 1)
+           end) do
+          {:cont, {:ok, [opt | acc]}}
+        else
+          error =
+            ArgumentError.invalid_option(
+              :tags,
+              v,
+              ~s(must map custom tags such as "!money" to 1-arity functions)
+            )
+
+          {:halt, {:error, error}}
+        end
+
+      {:tags, v}, {:ok, _acc} ->
+        error = ArgumentError.invalid_option(:tags, v, "must be a map")
+        {:halt, {:error, error}}
+
       {:schema, v} = opt, {:ok, acc} when v in @valid_schema_values ->
         {:cont, {:ok, [opt | acc]}}
 
@@ -464,11 +494,21 @@ defmodule YAML do
     end)
     |> case do
       {:ok, valid} ->
-        if valid[:detailed] and Keyword.has_key?(valid, :as) do
-          {:error,
-           ArgumentError.invalid_option(:as, valid[:as], "is not supported with detailed: true")}
-        else
-          {:ok, valid}
+        cond do
+          valid[:detailed] and Keyword.has_key?(valid, :as) ->
+            {:error,
+             ArgumentError.invalid_option(:as, valid[:as], "is not supported with detailed: true")}
+
+          valid[:detailed] and valid[:tags] not in [nil, %{}] ->
+            {:error,
+             ArgumentError.invalid_option(
+               :tags,
+               valid[:tags],
+               "is not supported with detailed: true"
+             )}
+
+          true ->
+            {:ok, valid}
         end
 
       error ->
@@ -476,9 +516,12 @@ defmodule YAML do
     end
   end
 
-  # The AST is only built for detailed: true; otherwise Rust builds the maps and lists
+  # The AST is only built for detailed: true, or for :tags to see each node's tag;
+  # otherwise Rust builds the maps and lists
+  defp ast?(opts), do: opts[:detailed] or opts[:tags] != %{}
+
   defp parse(binary, opts) do
-    if opts[:detailed],
+    if ast?(opts),
       do: Parser.parse(binary, opts[:schema]),
       else: Parser.decode(binary, opts[:schema], opts[:enable_merge])
   end
@@ -494,19 +537,49 @@ defmodule YAML do
     opts
     |> Enum.sort_by(fn {key, _} -> Map.get(@option_priority, key, 999) end)
     |> Enum.reduce(yaml, fn
-      {:return, :auto}, [] -> nil
-      {:return, :auto}, [single] -> single
-      {:return, :auto}, yaml -> yaml
-      {:return, :all_documents}, yaml -> yaml
-      {:return, :first_document}, [] -> nil
-      {:return, :first_document}, [first | _] -> first
-      {:detailed, true}, yaml -> yaml
-      {:detailed, false}, yaml -> Parser.atomize_keys(yaml, opts[:atomize_keys])
-      {:enable_merge, true}, yaml -> if opts[:detailed], do: Merge.apply(yaml), else: yaml
-      {:enable_merge, false}, yaml -> yaml
-      {:atomize_keys, _}, yaml -> yaml
-      {:as, template}, yaml -> Enum.map(yaml, &Decode.as(&1, template))
-      {:schema, _}, yaml -> yaml
+      {:return, :auto}, [] ->
+        nil
+
+      {:return, :auto}, [single] ->
+        single
+
+      {:return, :auto}, yaml ->
+        yaml
+
+      {:return, :all_documents}, yaml ->
+        yaml
+
+      {:return, :first_document}, [] ->
+        nil
+
+      {:return, :first_document}, [first | _] ->
+        first
+
+      {:detailed, true}, yaml ->
+        yaml
+
+      {:detailed, false}, yaml ->
+        if ast?(opts),
+          do: Parser.simplify(yaml, opts[:atomize_keys], opts[:tags]),
+          else: Parser.atomize_keys(yaml, opts[:atomize_keys])
+
+      {:enable_merge, true}, yaml ->
+        if ast?(opts), do: Merge.apply(yaml), else: yaml
+
+      {:enable_merge, false}, yaml ->
+        yaml
+
+      {:atomize_keys, _}, yaml ->
+        yaml
+
+      {:as, template}, yaml ->
+        Enum.map(yaml, &Decode.as(&1, template))
+
+      {:schema, _}, yaml ->
+        yaml
+
+      {:tags, _}, yaml ->
+        yaml
     end)
   end
 end
