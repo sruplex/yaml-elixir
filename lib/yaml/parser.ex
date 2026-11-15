@@ -3,9 +3,9 @@ defmodule YAML.Parser do
   Parses YAML strings into AST or simplified Elixir data structures.
   """
 
+  alias YAML.AST.{Document, List, Mapping, Meta, Scalar}
   alias YAML.Native
   alias YAML.ParsingError
-  alias YAML.AST.{Document, Scalar, List, Mapping, Meta}
 
   @schemas [:failsafe, :json, :core, :yaml11]
 
@@ -176,11 +176,9 @@ defmodule YAML.Parser do
   defp atomize_key(key, nil) when is_binary(key), do: key
 
   defp atomize_key(key, :safe) when is_binary(key) do
-    try do
-      String.to_existing_atom(key)
-    rescue
-      ArgumentError -> key
-    end
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> key
   end
 
   defp atomize_key(key, true) when is_binary(key), do: String.to_atom(key)

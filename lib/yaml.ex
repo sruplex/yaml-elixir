@@ -2,14 +2,17 @@ defmodule YAML do
   @moduledoc """
   Documentation for YAML.
   """
-  alias YAML.Parser
-  alias YAML.Merge
-  alias YAML.Encode
-  alias YAML.Decode
   alias YAML.ArgumentError
-  alias YAML.EncodeError
-  alias YAML.ParsingError
   alias YAML.AST.Document
+  alias YAML.Decode
+  alias YAML.Encode
+  alias YAML.EncodeError
+  alias YAML.Merge
+  alias YAML.Parser
+  alias YAML.ParsingError
+
+  # File.Error is an exception with no t() type of its own
+  @typep file_error :: %File.Error{}
 
   @valid_schema_values [:failsafe, :json, :core, :yaml11]
 
@@ -99,7 +102,7 @@ defmodule YAML do
 
   """
   @spec decode_file(Path.t(), keyword()) ::
-          {:ok, term()} | {:error, %File.Error{} | ParsingError.t() | ArgumentError.t()}
+          {:ok, term()} | {:error, file_error() | ParsingError.t() | ArgumentError.t()}
   def decode_file(path, opts \\ []) when is_list(opts) do
     case File.read(path) do
       {:ok, binary} ->
@@ -289,7 +292,7 @@ defmodule YAML do
 
   """
   @spec encode_file(term(), Path.t(), keyword()) ::
-          :ok | {:error, %File.Error{} | EncodeError.t() | ArgumentError.t()}
+          :ok | {:error, file_error() | EncodeError.t() | ArgumentError.t()}
   def encode_file(term, path, opts \\ []) when is_list(opts) do
     with {:ok, iodata} <- encode_to_iodata(term, opts) do
       case File.write(path, iodata) do
@@ -407,6 +410,8 @@ defmodule YAML do
     tags: %{}
   ]
 
+  # One clause per option, so it's over Credo's complexity limit
+  # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp validate_opts(opts) do
     @default_opts
     |> Keyword.merge(opts)
@@ -455,10 +460,13 @@ defmodule YAML do
 
       {:tags, v} = opt, {:ok, acc} when is_map(v) ->
         # Core tags such as "!!str" are given in full form to every plain value, so they're refused
-        if Enum.all?(v, fn {tag, fun} ->
-             is_binary(tag) and not String.starts_with?(tag, ["!!", "tag:yaml.org,2002:"]) and
-               is_function(fun, 1)
-           end) do
+        custom =
+          Enum.all?(v, fn {tag, fun} ->
+            is_binary(tag) and not String.starts_with?(tag, ["!!", "tag:yaml.org,2002:"]) and
+              is_function(fun, 1)
+          end)
+
+        if custom do
           {:cont, {:ok, [opt | acc]}}
         else
           error =

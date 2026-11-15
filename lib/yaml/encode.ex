@@ -1,7 +1,7 @@
 defmodule YAML.Encode do
   @moduledoc false
 
-  alias YAML.AST.{Document, Scalar, List, Mapping}
+  alias YAML.AST.{Document, List, Mapping, Scalar}
   alias YAML.EncodeError
 
   @indent_width 2
@@ -41,14 +41,14 @@ defmodule YAML.Encode do
     {:encode_error, %EncodeError{} = error} -> {:error, error}
   end
 
-  @spec document(%Document{}) :: {:ok, iodata()} | {:error, EncodeError.t()}
+  @spec document(Document.t()) :: {:ok, iodata()} | {:error, EncodeError.t()}
   def document(%Document{} = document) do
     {:ok, ast_document(document)}
   catch
     {:encode_error, %EncodeError{} = error} -> {:error, error}
   end
 
-  @spec documents([%Document{}]) :: {:ok, iodata()} | {:error, EncodeError.t()}
+  @spec documents([Document.t()]) :: {:ok, iodata()} | {:error, EncodeError.t()}
   def documents(documents) when is_list(documents) do
     {:ok, ast_documents(documents, 0)}
   catch
@@ -314,15 +314,11 @@ defmodule YAML.Encode do
 
       :binary.match(text, "\n") != :nomatch and not indented_start?(text) and
           block_safe?(text, false, false) ->
+        # The chomping indicator keeps the text's final newlines: none, one, or more
         body = String.trim_trailing(text, "\n")
-
-        {chomp, extra} =
-          case byte_size(text) - byte_size(body) do
-            0 -> {"|-", []}
-            1 -> {"|", []}
-            newlines -> {"|+", [:binary.copy("\n", newlines - 1)]}
-          end
-
+        newlines = byte_size(text) - byte_size(body)
+        chomp = Enum.at(["|-", "|"], newlines, "|+")
+        extra = [:binary.copy("\n", max(newlines - 1, 0))]
         [chomp, ?\n | block_lines(:binary.split(body, "\n", [:global]), indent(level), extra)]
 
       true ->

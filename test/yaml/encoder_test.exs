@@ -2,7 +2,7 @@ defmodule YAML.EncoderTest do
   use ExUnit.Case, async: true
 
   alias YAML.EncodeError
-  alias YAML.Support.{Point, User, Session, Money, Box, Broken}
+  alias YAML.Support.{Box, Broken, Money, Point, Session, User}
 
   defp encode(term), do: YAML.encode(term, sort_maps: true)
 
