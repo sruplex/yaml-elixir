@@ -1,6 +1,11 @@
 YAML
 ====
 
+[![Docs](https://img.shields.io/badge/docs-hexdocs-blue.svg)](https://hexdocs.pm/yaml)
+[![Downloads](https://img.shields.io/hexpm/dt/yaml.svg)](https://hex.pm/packages/yaml)
+[![Version](https://img.shields.io/hexpm/v/yaml.svg)](https://hex.pm/packages/yaml)
+[![License](https://img.shields.io/hexpm/l/yaml.svg)](LICENSE)
+
 > YAML Encoding and Decoding in Elixir
 
 This library decodes YAML with a fast Rust parser and provides a clean and intuitive
@@ -228,3 +233,8 @@ processes, and many files can be decoded at once.
  - [x] Streaming
  - [x] Tests
  - [x] CI
+
+
+## License
+
+MIT, see [LICENSE](LICENSE).
