@@ -74,7 +74,7 @@ defmodule YAML.MixProject do
       maintainers: ["Sruplex", "Sheharyar Naseer"],
       licenses: ["MIT"],
       files: ~w(
-        mix.exs lib README.md CHANGELOG.md checksum-Elixir.YAML.Native.exs
+        mix.exs lib README.md CHANGELOG.md LICENSE checksum-Elixir.YAML.Native.exs
         native/yaml_parser/src native/yaml_parser/Cargo.toml native/yaml_parser/Cargo.lock
         native/yaml_parser/.cargo native/yaml_parser/Cross.toml
       ),

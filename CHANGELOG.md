@@ -23,6 +23,7 @@
 ### Fixed
 
 - An alias to a flow map or list gives the whole node, not its first value.
+- The Hex package includes the MIT `LICENSE` file.
 - A `|+` or `>+` block at the end of the input keeps its last blank lines.
 - Custom tags such as `!thing` are accepted instead of returning an error.
 - Every `<<` key in a map is merged, not only the last one.
