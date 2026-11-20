@@ -1,6 +1,7 @@
 YAML
 ====
 
+[![CI](https://github.com/sruplex/yaml-elixir/actions/workflows/ci.yml/badge.svg)](https://github.com/sruplex/yaml-elixir/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-hexdocs-blue.svg)](https://hexdocs.pm/yaml)
 [![Downloads](https://img.shields.io/hexpm/dt/yaml.svg)](https://hex.pm/packages/yaml)
 [![Version](https://img.shields.io/hexpm/v/yaml.svg)](https://hex.pm/packages/yaml)
