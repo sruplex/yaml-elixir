@@ -20,7 +20,7 @@ Add `yaml` to your project dependencies in `mix.exs`:
 
 ```elixir
 def deps do
-  [{:yaml, "~> 0.3.0"}]
+  [{:yaml, "~> 0.4.0"}]
 end
 ```
 
