@@ -3,7 +3,7 @@ defmodule YAML.MixProject do
 
   @app :yaml
   @name "YAML"
-  @version "0.3.0"
+  @version "0.4.0"
   @github "https://github.com/sruplex/yaml-elixir"
 
   # NOTE:
