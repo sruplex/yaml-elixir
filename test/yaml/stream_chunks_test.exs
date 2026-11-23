@@ -151,6 +151,14 @@ defmodule YAML.StreamChunksTest do
       assert [[%User{name: "n1", n: 1} | _] | _] = stream([users], as: [%User{}])
     end
 
+    test "keeps a long value under one key whole, with its key's line, with detailed: true" do
+      yaml = "version: 1\nrecords:\n" <> indent(@list)
+      assert [%YAML.AST.Document{root: root}] = stream([yaml], detailed: true)
+
+      assert [_version, {%YAML.AST.Scalar{value: "records", meta: %{line: 2}}, _records}] =
+               root.pairs
+    end
+
     test "gives AST pieces with their lines in the whole stream, with detailed: true" do
       yaml = "a: 1\n---\n" <> @list
       [_first, whole] = YAML.decode!(yaml, detailed: true, return: :all_documents)
@@ -216,6 +224,29 @@ defmodule YAML.StreamChunksTest do
       yaml = @list <> "- !bad x\n"
 
       assert_raise ArgumentError, "bad value", fn -> stream([yaml], tags: tags) end
+    end
+
+    test "throws and exits from a :tags function in the caller" do
+      yaml = @list <> "- !bad x\n"
+
+      assert catch_throw(stream([yaml], tags: %{"!bad" => fn _ -> throw(:bad) end})) == :bad
+      assert catch_exit(stream([yaml], tags: %{"!bad" => fn _ -> exit(:bad) end})) == :bad
+    end
+
+    test "gives an error for a line that isn't a key where a map is cut" do
+      for yaml <- [
+            "a: 1\nb: 2\noops\n",
+            "top1:\n  key1: val1\ntop2\n",
+            "key:\n - item1\n - item2\ninvalid\n",
+            "key: value\nthis is #not a: key\n"
+          ],
+          size <- 1..byte_size(yaml) do
+        {:error, %ParsingError{location: {line, _}}} = YAML.decode(yaml)
+        results = [yaml] |> YAML.Chunks.stream(&YAML.decode/1, chunk_size: size) |> Enum.to_list()
+        errors = Enum.filter(results, &match?({:error, _}, &1))
+
+        assert [{:error, %ParsingError{location: {^line, _}}}] = errors, inspect({yaml, size})
+      end
     end
 
     test "is lazy" do

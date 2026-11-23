@@ -86,10 +86,6 @@ defmodule YAML do
     end
   end
 
-  defp decode_checked(binary, opts) do
-    with {:ok, yaml} <- parse(binary, opts), do: {:ok, apply_options(yaml, opts)}
-  end
-
   def decode!(binary, opts \\ []) when is_binary(binary) do
     case decode(binary, opts) do
       {:ok, yaml} -> yaml
@@ -169,7 +165,11 @@ defmodule YAML do
         {:error, error} -> raise error
       end
 
-    Chunks.stream(enumerable, &decode_checked(&1, opts), detailed: opts[:detailed])
+    decode = fn binary ->
+      with {:ok, yaml} <- parse(binary, opts), do: {:ok, apply_options(yaml, opts)}
+    end
+
+    Chunks.stream(enumerable, decode, detailed: opts[:detailed])
   end
 
   @doc """

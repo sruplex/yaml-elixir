@@ -14,6 +14,7 @@
 - Input must be UTF-8. yamerl also read UTF-16 and UTF-32.
 - `YAML.decode_stream/2` yields a document over 256 KB in pieces of about 256 KB, each a list of some
   of its items or a map of some of its pairs, so a long document needs little memory.
+  To get a whole document, use `YAML.decode/2` or `YAML.decode_file/2`.
 
 ### Added
 

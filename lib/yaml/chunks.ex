@@ -30,7 +30,9 @@ defmodule YAML.Chunks do
     end)
   end
 
-  defp result({_continued, {:raise, error, stacktrace}}, _failed), do: reraise(error, stacktrace)
+  defp result({_continued, {:raise, kind, reason, stacktrace}}, _failed),
+    do: :erlang.raise(kind, reason, stacktrace)
+
   defp result({true, {:ok, [_]}}, true), do: {[], true}
   defp result({true, {:ok, [_ | data]}}, true), do: {data, false}
   defp result({true, {:error, _error}}, true), do: {[], true}
@@ -47,8 +49,8 @@ defmodule YAML.Chunks do
       {:error, error} ->
         decode_each(text, error, line, continued, decode)
     end
-  rescue
-    error -> [{false, {:raise, error, __STACKTRACE__}}]
+  catch
+    kind, reason -> [{false, {:raise, kind, reason, __STACKTRACE__}}]
   end
 
   defp decode_each(text, error, line, continued, decode) do
@@ -89,15 +91,13 @@ defmodule YAML.Chunks do
   defp at(%ParsingError{location: {at, column}} = error, line),
     do: %{error | location: {at + line - 1, column}}
 
-  @spec pieces(Enumerable.t(), {pos_integer(), non_neg_integer()}) ::
-          Enumerable.t({integer(), iodata(), boolean()})
-  def pieces(enumerable, sizes) do
+  defp pieces(enumerable, sizes) do
     Stream.transform(
       enumerable,
       fn -> {"", new(1)} end,
       fn chunk, {rest, piece} ->
         text = rest <> chunk
-        ends = :binary.matches(text, "\n")
+        ends = :binary.matches(text, "\n", scope: {byte_size(rest), byte_size(chunk)})
         {done, piece, from} = scan(ends, 0, piece, nil, {text, sizes}, [])
         {done, {binary_part(text, from, byte_size(text) - from), piece}}
       end,
@@ -117,7 +117,7 @@ defmodule YAML.Chunks do
     first = if e > s, do: :binary.at(text, s)
 
     cond do
-      descend?(piece, run, chunk_size) ->
+      descend?(piece, run, sizes) ->
         {ready, piece} = descend(flush(piece, run, text))
         scan(all, s, piece, nil, ctx, Enum.reverse(ready, done))
 
@@ -156,10 +156,11 @@ defmodule YAML.Chunks do
 
   defp column0?(first), do: first not in [nil, ?\s, ?\t, ?\r, ?#]
 
-  defp descend?(piece, run, chunk_size),
+  # An AST would give the repeated key the line before the piece
+  defp descend?(piece, run, {chunk_size, join_size}),
     do:
-      piece.key == nil and not piece.stuck and piece.kind == :map and piece.pad == "" and
-        size(piece, run) - piece.doc_size >= 2 * chunk_size
+      join_size > 0 and piece.key == nil and not piece.stuck and piece.kind == :map and
+        piece.pad == "" and size(piece, run) - piece.doc_size >= 2 * chunk_size
 
   defp descend(piece) do
     text = piece.lines |> Enum.reverse() |> IO.iodata_to_binary()
@@ -327,7 +328,7 @@ defmodule YAML.Chunks do
 
   defp content(line, piece, at, chunk_size) do
     cond do
-      piece.key != nil and ends_value?(line, piece) ->
+      piece.key != nil and item?(:map, line) ->
         next_piece(piece, line, at, %{kind: :map, pad: "", key: nil})
 
       piece.size - piece.doc_size >= chunk_size and item?(piece.kind, piece.pad, line) ->
@@ -352,15 +353,6 @@ defmodule YAML.Chunks do
     }
 
     {[finish(piece)], Enum.reduce(head ++ [line], next, &append/2)}
-  end
-
-  # A list under a key may start its items at column 0
-  defp ends_value?(line, piece) do
-    case line do
-      "" -> false
-      <<c, _::binary>> when c in ~c" \t\r#" -> false
-      _ -> not (piece.pad == "" and piece.kind == :list and item?(:list, line))
-    end
   end
 
   defp start(line, piece, at, join_size) do
@@ -445,6 +437,14 @@ defmodule YAML.Chunks do
   defp item?(:list, "-"), do: true
   defp item?(:list, <<"-", c, _::binary>>), do: c in ~c" \t\r"
   defp item?(:map, ""), do: false
-  defp item?(:map, line), do: not item?(:list, line) and :binary.first(line) not in ~c" \t\r#:]}"
+
+  # Only a key line starts a pair, so any other line stays with the one before and fails to parse
+  defp item?(:map, line) do
+    [line | _comment] = String.split(line, " #", parts: 2)
+
+    not item?(:list, line) and :binary.first(line) not in ~c" \t\r#:]}" and
+      (String.contains?(line, ": ") or String.ends_with?(String.trim_trailing(line), ":"))
+  end
+
   defp item?(_kind, _line), do: false
 end
