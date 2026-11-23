@@ -12,6 +12,8 @@
 - `YAML.Parser.parse/2` and `parse!/2` take a schema atom instead of yamerl options.
   Change `YAML.Parser.parse(yaml, schema: :yaml11)` to `YAML.Parser.parse(yaml, :yaml11)`.
 - Input must be UTF-8. yamerl also read UTF-16 and UTF-32.
+- `YAML.decode_stream/2` yields a document over 256 KB in pieces of about 256 KB, each a list of some
+  of its items or a map of some of its pairs, so a long document needs little memory.
 
 ### Added
 

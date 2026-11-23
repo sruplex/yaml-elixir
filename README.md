@@ -209,7 +209,8 @@ To read or write a whole file, use `YAML.decode_file/2` and `YAML.encode_file/3`
 ### Streaming
 
 To read or write large files one document at a time, use
-`YAML.decode_stream/2` and `YAML.encode_stream/2`:
+`YAML.decode_stream/2` and `YAML.encode_stream/2`. A document over 256 KB is read in pieces of
+about 256 KB, each a list of some of its items or a map of some of its pairs:
 
 ```elixir
 File.stream!("in.yml")

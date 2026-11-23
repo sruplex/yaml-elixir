@@ -4,6 +4,7 @@ defmodule YAML do
   """
   alias YAML.ArgumentError
   alias YAML.AST.Document
+  alias YAML.Chunks
   alias YAML.Decode
   alias YAML.Encode
   alias YAML.EncodeError
@@ -85,6 +86,10 @@ defmodule YAML do
     end
   end
 
+  defp decode_checked(binary, opts) do
+    with {:ok, yaml} <- parse(binary, opts), do: {:ok, apply_options(yaml, opts)}
+  end
+
   def decode!(binary, opts \\ []) when is_binary(binary) do
     case decode(binary, opts) do
       {:ok, yaml} -> yaml
@@ -137,6 +142,8 @@ defmodule YAML do
   `decode/2`, except `:return`. Raises `YAML.ArgumentError` on invalid options.
 
   A document is yielded once the next `---` or `...` line, or the end of the input, is read.
+  A document over 256 KB is yielded in pieces of about 256 KB, each a list of some of its items or a
+  map of some of its pairs; an alias finds its anchor only in the same piece.
 
   ## Examples
 
@@ -162,14 +169,7 @@ defmodule YAML do
         {:error, error} -> raise error
       end
 
-    mode = if ast?(opts), do: :ast, else: {:plain, opts[:enable_merge]}
-
-    enumerable
-    |> Parser.stream(opts[:schema], mode)
-    |> Stream.flat_map(fn
-      {:ok, documents} -> documents |> apply_options(opts) |> Enum.map(&{:ok, &1})
-      {:error, error} -> [{:error, error}]
-    end)
+    Chunks.stream(enumerable, &decode_checked(&1, opts), detailed: opts[:detailed])
   end
 
   @doc """
