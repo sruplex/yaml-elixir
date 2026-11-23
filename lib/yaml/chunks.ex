@@ -15,7 +15,7 @@ defmodule YAML.Chunks do
           Enumerable.t()
   def stream(enumerable, decode, opts \\ []) do
     chunk_size = Keyword.get(opts, :chunk_size, @chunk_size)
-    # Several documents in one piece place an empty document's null unlike decoding it alone
+    # Joined documents move an empty document's null to another line
     join_size = if opts[:detailed], do: 0, else: chunk_size
 
     enumerable
@@ -30,7 +30,6 @@ defmodule YAML.Chunks do
     end)
   end
 
-  # A raise in a worker is raised in the caller, as when decoding there
   defp result({_continued, {:raise, error, stacktrace}}, _failed), do: reraise(error, stacktrace)
   defp result({true, {:ok, [_]}}, true), do: {[], true}
   defp result({true, {:ok, [_ | data]}}, true), do: {data, false}
@@ -52,7 +51,6 @@ defmodule YAML.Chunks do
     error -> [{false, {:raise, error, __STACKTRACE__}}]
   end
 
-  # A piece with an error is decoded one document at a time, so the error is the same as alone
   defp decode_each(text, error, line, continued, decode) do
     case [text] |> pieces({byte_size(text) + 1, 0}) |> Enum.to_list() do
       [_document] ->
@@ -144,7 +142,6 @@ defmodule YAML.Chunks do
     end
   end
 
-  # A --- line between small documents is kept without looking at the next document's shape
   defp lazy?(line, piece, run, join_size),
     do: line == "---" and piece.begun and piece.key == nil and size(piece, run) < join_size
 
@@ -159,13 +156,11 @@ defmodule YAML.Chunks do
 
   defp column0?(first), do: first not in [nil, ?\s, ?\t, ?\r, ?#]
 
-  # A key of a root map holding more than two chunks has its own value cut instead
   defp descend?(piece, run, chunk_size),
     do:
       piece.key == nil and not piece.stuck and piece.kind == :map and piece.pad == "" and
         size(piece, run) - piece.doc_size >= 2 * chunk_size
 
-  # Each later piece repeats the key's line, so it decodes to a map of that key alone
   defp descend(piece) do
     text = piece.lines |> Enum.reverse() |> IO.iodata_to_binary()
     earlier = binary_part(text, 0, piece.doc_size)
@@ -311,7 +306,6 @@ defmodule YAML.Chunks do
     end
   end
 
-  # A document's shape is only needed once it is long enough to be cut
   defp add_lazy(line, piece, {chunk_size, _join_size} = sizes) do
     if piece.size - piece.doc_size < chunk_size do
       {[], append(line, piece)}
@@ -360,7 +354,7 @@ defmodule YAML.Chunks do
     {[finish(piece)], Enum.reduce(head ++ [line], next, &append/2)}
   end
 
-  # A "- " line at column 0 is still in the value of a list written at column 0
+  # A list under a key may start its items at column 0
   defp ends_value?(line, piece) do
     case line do
       "" -> false
@@ -404,7 +398,6 @@ defmodule YAML.Chunks do
     end
   end
 
-  # Content after "---", such as "--- |", is a root that isn't cut
   defp after_marker(piece, <<_::binary-size(3), rest::binary>>) do
     case String.trim(rest) do
       "" -> piece
@@ -449,7 +442,6 @@ defmodule YAML.Chunks do
     end
   end
 
-  # A closing bracket never starts a key
   defp item?(:list, "-"), do: true
   defp item?(:list, <<"-", c, _::binary>>), do: c in ~c" \t\r"
   defp item?(:map, ""), do: false

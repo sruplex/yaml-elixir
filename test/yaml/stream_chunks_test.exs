@@ -7,7 +7,6 @@ defmodule YAML.StreamChunksTest do
     defstruct [:name, :n]
   end
 
-  # Over 256 KB, so decode_stream/2 gives them in pieces
   @list Enum.map_join(
           1..12_000,
           &"- id: #{&1}\n  name: user #{&1}\n  tags: [a, b]\n  note: |\n    x\n"
