@@ -6,6 +6,10 @@ on:
     branches: [ main ]
   pull_request:
 
+env:
+  OTP_VERSION: '28'
+  ELIXIR_VERSION: '1.19.1'
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -17,14 +21,11 @@ jobs:
       - name: Setup Elixir and Erlang
         uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.19.1'
-          otp-version: '28'
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
 
       - name: Install dependencies
         run: mix deps.get
-
-      - name: Check code formatting
-        run: mix format --check-formatted
 
       - name: Compile (warnings as errors)
         run: mix compile --warnings-as-errors
@@ -35,16 +36,12 @@ jobs:
       - name: Run tests
         run: mix test
 
-      - name: Check code with Credo
-        run: mix credo --strict
-
       - name: Restore Dialyzer PLT
         uses: actions/cache@v4
         with:
           path: priv/plts
-          key: plt-${{ runner.os }}-otp-28-elixir-1.19.1-${{ hashFiles('mix.lock') }}
-          restore-keys: plt-${{ runner.os }}-otp-28-elixir-1.19.1-
+          key: plt-${{ runner.os }}-otp-${{ env.OTP_VERSION }}-elixir-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
+          restore-keys: plt-${{ runner.os }}-otp-${{ env.OTP_VERSION }}-elixir-${{ env.ELIXIR_VERSION }}-
 
-      # In the test environment, the native library built for the tests is reused
-      - name: Run Dialyzer
-        run: MIX_ENV=test mix dialyzer --format github
+      - name: Check code quality
+        run: mix quality

@@ -22,6 +22,7 @@ defmodule YAML.MixProject do
       elixir: "~> 1.16",
       description: description(),
       package: package(),
+      aliases: aliases(),
       deps: deps(),
       elixirc_paths: elixirc_paths(Mix.env()),
       # The PLT is kept in priv/plts, so CI can cache it
@@ -55,6 +56,18 @@ defmodule YAML.MixProject do
       {:inch_ex, ">= 0.0.0", only: :docs},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+    ]
+  end
+
+  defp aliases do
+    [
+      quality: [
+        "format --check-formatted",
+        "deps.unlock --check-unused",
+        "hex.audit",
+        "credo --strict",
+        "dialyzer"
+      ]
     ]
   end
 
