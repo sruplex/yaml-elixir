@@ -34,7 +34,6 @@ defmodule YAML.Parser do
     run(string, schema, :ast)
   end
 
-  # Decodes straight to maps and lists, with merge keys resolved in Rust
   @doc false
   def decode(string, schema, enable_merge) do
     run(string, schema, {:plain, enable_merge})
@@ -42,7 +41,6 @@ defmodule YAML.Parser do
 
   defp run(string, schema, mode), do: string |> Native.parse(schema, mode) |> finish()
 
-  # A large input comes back unfinished after each slice of work, so other processes run in between
   defp finish({:cont, job}), do: job |> Native.resume() |> finish()
 
   defp finish({:ok, binary}), do: binary |> :erlang.binary_to_term() |> result()
@@ -111,7 +109,6 @@ defmodule YAML.Parser do
 
   def simplify(value, _atomize_keys, _tags), do: value
 
-  # Calls the function given for the node's tag in the `:tags` option
   defp handle_tag(value, _meta, tags) when map_size(tags) == 0, do: value
 
   defp handle_tag(value, %Meta{tag: tag}, tags) do
@@ -121,8 +118,6 @@ defmodule YAML.Parser do
     end
   end
 
-  # Each alias comes as {:__yaml_alias__, index} and becomes its anchor's value, shared, not copied
-  # An anchored value can only hold aliases to earlier anchors
   defp unalias_table(aliased) do
     aliased
     |> Enum.with_index()
@@ -143,7 +138,6 @@ defmodule YAML.Parser do
 
   defp unalias(value, _table), do: value
 
-  # Turns the keys of decoded maps into atoms, as the :atomize_keys option does
   @doc false
   def atomize_keys(data, mode) when mode in [false, nil], do: data
 

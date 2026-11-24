@@ -12,7 +12,6 @@ defmodule YAML do
   alias YAML.Parser
   alias YAML.ParsingError
 
-  # File.Error is an exception with no t() type of its own
   @typep file_error :: %File.Error{}
 
   @valid_schema_values [:failsafe, :json, :core, :yaml11]
@@ -259,7 +258,6 @@ defmodule YAML do
           {:ok, iodata()} | {:error, EncodeError.t() | ArgumentError.t()}
   def encode_to_iodata(term, opts \\ []) when is_list(opts) do
     with {:ok, sort} <- validate_encode_opts(opts, false) do
-      # A list starting with a document is written as one document each
       case term do
         %Document{} -> Encode.document(term)
         [%Document{} | _] -> Encode.documents(term)
@@ -353,7 +351,6 @@ defmodule YAML do
           _ -> Encode.data(item, sort)
         end
 
-      # Adds the item's index to the location of its error
       case written do
         {:error, error} -> {:error, EncodeError.prepend_location(error, index)}
         ok -> ok
@@ -388,7 +385,6 @@ defmodule YAML do
     end)
   end
 
-  # Returns the :sort_maps value, the only encode option
   defp validate_encode_opts([], sort), do: {:ok, sort}
 
   defp validate_encode_opts([{:sort_maps, v} | rest], _sort) when is_boolean(v),
@@ -412,7 +408,6 @@ defmodule YAML do
     tags: %{}
   ]
 
-  # One clause per option, so it's over Credo's complexity limit
   # credo:disable-for-next-line Credo.Check.Refactor.CyclomaticComplexity
   defp validate_opts(opts) do
     @default_opts
@@ -461,7 +456,6 @@ defmodule YAML do
         end
 
       {:tags, v} = opt, {:ok, acc} when is_map(v) ->
-        # Core tags such as "!!str" are given in full form to every plain value, so they're refused
         custom =
           Enum.all?(v, fn {tag, fun} ->
             is_binary(tag) and not String.starts_with?(tag, ["!!", "tag:yaml.org,2002:"]) and
@@ -526,8 +520,6 @@ defmodule YAML do
     end
   end
 
-  # The AST is only built for detailed: true, or for :tags to see each node's tag;
-  # otherwise Rust builds the maps and lists
   defp ast?(opts), do: opts[:detailed] or opts[:tags] != %{}
 
   defp parse(binary, opts) do

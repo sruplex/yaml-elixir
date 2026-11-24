@@ -3,7 +3,6 @@ defmodule YAML.Native do
 
   version = Mix.Project.config()[:version]
 
-  # Downloads the prebuilt library for this platform; builds it in this repo, or with YAML_BUILD=true
   use RustlerPrecompiled,
     otp_app: :yaml,
     crate: "yaml_parser",
@@ -24,9 +23,6 @@ defmodule YAML.Native do
       x86_64-unknown-linux-musl
     )
 
-  # Both return {:ok, binary} for :erlang.binary_to_term/1, {:error, message, line, column},
-  # or {:cont, job} after about half a millisecond, to pass to resume/1
-  # The mode is :ast, or {:plain, enable_merge} for maps and lists
   def parse(_yaml, _schema, _mode), do: :erlang.nif_error(:nif_not_loaded)
   def resume(_job), do: :erlang.nif_error(:nif_not_loaded)
 end

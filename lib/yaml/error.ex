@@ -55,16 +55,10 @@ defmodule YAML.EncodeError do
           location: [term()]
         }
 
-  # Exception Callbacks
-  # -------------------
-
   def message(%__MODULE__{message: message, location: []}), do: message
 
   def message(%__MODULE__{message: message, location: location}),
     do: "#{message} (at #{inspect(location)})"
-
-  # Helper API
-  # ----------
 
   @doc false
   def unsupported(term, name) do

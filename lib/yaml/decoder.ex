@@ -25,7 +25,6 @@ defprotocol YAML.Decoder do
 end
 
 defimpl YAML.Decoder, for: Any do
-  # A field's default value is the template for its value
   def decode(%_{} = template, map) when is_map(map) and not is_struct(map) do
     template
     |> Map.from_struct()
@@ -39,7 +38,6 @@ defimpl YAML.Decoder, for: Any do
 
   def decode(_template, value), do: value
 
-  # Keys are strings, or atoms with the atomize_keys option
   defp fetch(map, field) do
     with :error <- Map.fetch(map, Atom.to_string(field)), do: Map.fetch(map, field)
   end

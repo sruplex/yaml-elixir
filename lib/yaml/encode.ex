@@ -6,16 +6,12 @@ defmodule YAML.Encode do
 
   @indent_width 2
 
-  # Plain words YAML would read as another type, in any letter case
   @reserved_words ~w(true false null yes no on off y n)
 
-  # Plain strings YAML would read as null, or as a merge or value key
   @reserved_symbols ~w(~ << =)
 
-  # Atoms written as YAML values instead of as their names
   @value_atoms [nil, true, false, :"+inf", :"-inf", :nan]
 
-  # Keys written as a scalar
   defguardp is_scalar_key(key)
             when is_binary(key) or is_atom(key) or is_number(key) or is_struct(key, Date) or
                    is_struct(key, Time) or is_struct(key, NaiveDateTime) or
@@ -23,12 +19,10 @@ defmodule YAML.Encode do
 
   defguardp is_plain_map(term) when is_map(term) and not is_struct(term)
 
-  # Structs written through YAML.Encoder, since dates and times are written directly
   defguardp is_encoded_struct(term)
             when is_struct(term) and not is_struct(term, Date) and not is_struct(term, Time) and
                    not is_struct(term, NaiveDateTime) and not is_struct(term, DateTime)
 
-  # Characters that must be escaped in a double-quoted string
   defguardp is_escaped_byte(c) when c < 0x20 or c == 0x7F
 
   defguardp is_escaped_char(c)
@@ -55,11 +49,7 @@ defmodule YAML.Encode do
     {:encode_error, %EncodeError{} = error} -> {:error, error}
   end
 
-  # Errors are thrown inside the walk and returned by the public functions
   defp fail(error), do: throw({:encode_error, error})
-
-  # Plain data
-  # ----------
 
   defp data_root(map, _sort) when map == %{}, do: "{}\n"
   defp data_root([], _sort), do: "[]\n"
@@ -71,7 +61,6 @@ defmodule YAML.Encode do
 
   defp data_root(value, _sort), do: write_value(value, 1)
 
-  # A struct as the data its YAML.Encoder implementation returns
   defp encode_struct(struct) do
     YAML.Encoder.encode(struct)
   rescue
@@ -81,11 +70,9 @@ defmodule YAML.Encode do
         else: reraise(error, __STACKTRACE__)
   end
 
-  # The first line takes `first_indent`, so it can follow "- " on the same line
   defp data_pairs(map, level, first_indent, sort) do
     [first | rest] = map_pairs(map, sort)
 
-    # Built only when a second line needs it, so deep single-item nesting stays cheap
     line_indent = if rest == [], do: "", else: indent(level)
 
     [
@@ -94,7 +81,6 @@ defmodule YAML.Encode do
     ]
   end
 
-  # Adds the map key to the location of an error from inside the value
   defp data_pair({key, value}, map, level, line_indent, sort) when is_scalar_key(key) do
     text = key_text(key, map)
     written_key = write_scalar(text)
@@ -110,7 +96,6 @@ defmodule YAML.Encode do
     pair_line(text, written_key, written, level, line_indent)
   end
 
-  # Map and list keys use the explicit "? key" form, with the value on the ":" line
   defp data_pair({key, value}, _map, level, line_indent, sort)
        when is_plain_map(key) or is_list(key) do
     written_key = data_item_value(key, level + 1, sort)
@@ -124,21 +109,18 @@ defmodule YAML.Encode do
   defp data_pair({key, _value}, _map, _level, _line_indent, _sort),
     do: fail(EncodeError.invalid_key(key, type_name(key)))
 
-  # The parser reads a plain "key:" of up to 1024 characters, so a longer one uses "? key"
   defp pair_line(text, written_key, written, level, line_indent) do
     if is_binary(text) and byte_size(text) > 255 and IO.iodata_length(written_key) > 1024,
       do: [line_indent, "? ", written_key, ?\n, indent(level), ?: | written],
       else: [line_indent, written_key, ?: | written]
   end
 
-  # A key written as text would repeat a string key with the same text
   defp key_text(key, map) do
     text = as_text(key)
     if text !== key and is_map_key(map, text), do: fail(EncodeError.duplicate_key(key))
     text
   end
 
-  # A map's pairs in the order they're written
   defp map_pairs(map, false), do: Map.to_list(map)
 
   defp map_pairs(map, true),
@@ -162,7 +144,6 @@ defmodule YAML.Encode do
 
   defp data_next_items([], _level, _line_indent, _index, _sort), do: []
 
-  # Adds the list index to the location of an error from inside the item
   defp data_item(item, level, line_indent, index, sort) do
     [line_indent, "- " | data_item_value(item, level + 1, sort)]
   catch
@@ -170,7 +151,6 @@ defmodule YAML.Encode do
       fail(EncodeError.prepend_location(error, index))
   end
 
-  # Scalars and empty collections stay on the key's line, others start on the next
   defp data_value(map, _level, _sort) when map == %{}, do: " {}\n"
   defp data_value([], _level, _sort), do: " []\n"
 
@@ -185,7 +165,6 @@ defmodule YAML.Encode do
 
   defp data_value(value, level, _sort), do: [?\s | write_value(value, level)]
 
-  # Everything after "- " starts on the same line
   defp data_item_value(map, _level, _sort) when map == %{}, do: "{}\n"
   defp data_item_value([], _level, _sort), do: "[]\n"
 
@@ -200,10 +179,6 @@ defmodule YAML.Encode do
 
   defp data_item_value(value, level, _sort), do: write_value(value, level)
 
-  # YAML AST
-  # --------
-
-  # Adds the document index to the location of an error from inside it
   defp ast_documents([%Document{} = document | rest], index) do
     written =
       try do
@@ -220,13 +195,11 @@ defmodule YAML.Encode do
 
   defp ast_document(%Document{root: root}), do: ["---\n", ast_root(root)]
 
-  # The root ends with a newline, so the next "---" starts a new line
   defp ast_root(%Scalar{value: value}), do: write_value(value, 1)
   defp ast_root(%Mapping{pairs: []}), do: "{}\n"
   defp ast_root(%List{items: []}), do: "[]\n"
   defp ast_root(node), do: ast_node(node, 0)
 
-  # The same layout as the plain data walker, over AST nodes
   defp ast_node(%Mapping{pairs: pairs}, level), do: ast_pairs(pairs, level, indent(level))
   defp ast_node(%List{items: items}, level), do: ast_items(items, level, indent(level))
 
@@ -292,10 +265,6 @@ defmodule YAML.Encode do
   defp ast_item_value(%Mapping{pairs: pairs}, level), do: ast_pairs(pairs, level, "")
   defp ast_item_value(%List{items: items}, level), do: ast_items(items, level, "")
 
-  # Writers
-  # -------
-
-  # Atoms, dates and times as the text they're written as
   defp as_text(atom) when is_atom(atom) and atom not in @value_atoms, do: Atom.to_string(atom)
   defp as_text(%Date{} = date), do: Date.to_iso8601(date)
   defp as_text(%Time{} = time), do: Time.to_iso8601(time)
@@ -303,10 +272,8 @@ defmodule YAML.Encode do
   defp as_text(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
   defp as_text(value), do: value
 
-  # A value and its newline; multi-line strings become block scalars
   defp write_value("", _level), do: [~s(""), ?\n]
 
-  # A string with a newline is never plain, so plain ones skip the block checks
   defp write_value(text, level) when is_binary(text) do
     cond do
       plain_chars?(text) ->
@@ -314,7 +281,6 @@ defmodule YAML.Encode do
 
       :binary.match(text, "\n") != :nomatch and not indented_start?(text) and
           block_safe?(text, false, false) ->
-        # The chomping indicator keeps the text's final newlines: none, one, or more
         body = String.trim_trailing(text, "\n")
         newlines = byte_size(text) - byte_size(body)
         chomp = Enum.at(["|-", "|"], newlines, "|+")
@@ -331,7 +297,6 @@ defmodule YAML.Encode do
 
   defp write_value(value, _level), do: [write_scalar(value), ?\n]
 
-  # Empty lines get no indent
   defp block_lines(["" | lines], line_indent, extra),
     do: [?\n | block_lines(lines, line_indent, extra)]
 
@@ -340,7 +305,6 @@ defmodule YAML.Encode do
 
   defp block_lines([], _line_indent, extra), do: extra
 
-  # Decode returns .inf, -.inf and .nan as these atoms
   defp write_scalar(:"+inf"), do: ".inf"
   defp write_scalar(:"-inf"), do: "-.inf"
   defp write_scalar(:nan), do: ".nan"
@@ -349,7 +313,6 @@ defmodule YAML.Encode do
   defp write_scalar(bool) when is_boolean(bool), do: Atom.to_string(bool)
   defp write_scalar(int) when is_integer(int), do: Integer.to_string(int)
 
-  # YAML 1.1 needs a sign in the exponent: 1.0e+20
   defp write_scalar(float) when is_float(float) do
     string = Float.to_string(float)
 
@@ -384,10 +347,6 @@ defmodule YAML.Encode do
   defp type_name(term) when is_list(term), do: "list"
   defp type_name(term) when is_map(term), do: "map"
 
-  # Strings
-  # -------
-
-  # Every letter case of each word, built at compile time
   for word <- @reserved_words do
     variants =
       Enum.reduce(String.graphemes(word), [""], fn c, acc ->
@@ -409,7 +368,6 @@ defmodule YAML.Encode do
   defp quote_start?(<<c, _::binary>>) when c in ~c"+-.?:,[]{}#&*!|>'\"%@`_ ", do: true
   defp quote_start?(_str), do: false
 
-  # Stops at the first reason to quote; invalid UTF-8 also returns false
   defp plain_chars?(<<": ", _::binary>>), do: false
   defp plain_chars?(<<" #", _::binary>>), do: false
   defp plain_chars?(<<":">>), do: false
@@ -423,7 +381,6 @@ defmodule YAML.Encode do
 
   defp quoted(str), do: [?", escape(str, str, 0, 0), ?"]
 
-  # Copies runs of safe bytes as slices of the original string
   defp escape(<<c, rest::binary>>, str, skip, 0) when c in [?", ?\\] or is_escaped_byte(c),
     do: [escape_char(c) | escape(rest, str, skip + 1, 0)]
 
@@ -472,15 +429,10 @@ defmodule YAML.Encode do
   defp utf8_size(c) when c < 0x10000, do: 3
   defp utf8_size(_c), do: 4
 
-  # Block scalars
-  # -------------
-
-  # Whether the first text line starts with a space or a tab
   defp indented_start?(<<?\n, rest::binary>>), do: indented_start?(rest)
   defp indented_start?(<<c, _::binary>>) when c in [?\s, ?\t], do: true
   defp indented_start?(_str), do: false
 
-  # No escaped characters, and some text after a newline
   defp block_safe?(<<?\n, rest::binary>>, multi, _newline), do: block_safe?(rest, multi, true)
 
   defp block_safe?(<<?\t, rest::binary>>, multi, newline),
@@ -498,9 +450,6 @@ defmodule YAML.Encode do
 
   defp block_safe?(<<>>, multi, _newline), do: multi
   defp block_safe?(_invalid, _multi, _newline), do: false
-
-  # Indentation
-  # -----------
 
   for level <- 0..32 do
     defp indent(unquote(level)), do: unquote(String.duplicate(" ", level * @indent_width))

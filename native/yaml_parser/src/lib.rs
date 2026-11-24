@@ -29,17 +29,12 @@ const BINARY: &str = "tag:yaml.org,2002:binary";
 const MAP: &str = "tag:yaml.org,2002:map";
 const SEQ: &str = "tag:yaml.org,2002:seq";
 
-// Values aliases may add beyond ten times the values written out, so a small file can't expand into gigabytes
 const MAX_ALIASED: usize = 1_000_000;
 
-// Inputs under this size take under a millisecond, so they are parsed in one call
 const SLICE_SIZE: usize = 2_000;
-// Work done in each call on a larger input, so the scheduler runs other processes in between
 const SLICE_TIME: Duration = Duration::from_micros(500);
-// Bytes checked for UTF-8 between looks at the clock
 const UTF8_CHUNK: usize = 1 << 20;
 
-// Ast builds YAML.AST structs; Plain builds maps and lists, with merge keys resolved
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
     Ast,
@@ -66,7 +61,6 @@ fn options(schema: Atom, mode: Term) -> (Schema, Mode) {
     } else {
         Schema::Core
     };
-    // :ast, or {:plain, enable_merge}
     let mode = match mode.decode::<(Atom, bool)>() {
         Ok((tag, merge)) if tag == atoms::plain() => Mode::Plain { merge },
         _ => Mode::Ast,
@@ -74,13 +68,11 @@ fn options(schema: Atom, mode: Term) -> (Schema, Mode) {
     (schema, mode)
 }
 
-// Returns {:ok, binary}, {:error, message, line, column}, or {:cont, job} to pass to resume/1
 #[rustler::nif]
 fn parse<'a>(env: Env<'a>, input: Binary<'a>, schema: Atom, mode: Term<'a>) -> Term<'a> {
     let (schema, mode) = options(schema, mode);
     let bytes = input.as_slice();
     if bytes.len() < SLICE_SIZE {
-        // Without a deadline the job always finishes
         let result = Job::new(bytes, schema, mode).step(None).unwrap();
         return reply(env, result);
     }
@@ -116,7 +108,6 @@ fn slice(env: Env<'_>, job: ResourceArc<Resumable>) -> Term<'_> {
     }
 }
 
-// The result is handed over as a binary in Erlang's external term format, without a copy
 fn reply(env: Env<'_>, result: Result<Vec<u8>, Failure>) -> Term<'_> {
     match result {
         Ok(bytes) => {
@@ -141,7 +132,6 @@ struct Resumable {
 #[rustler::resource_impl]
 impl rustler::Resource for Resumable {}
 
-// One decode: the UTF-8 check, then the parser's events, a slice at a time
 struct Job<'t> {
     bytes: &'t [u8],
     checked: usize,
@@ -161,7 +151,6 @@ impl<'t> Job<'t> {
         }
     }
 
-    // None when the deadline passed before the end
     fn step(&mut self, deadline: Option<Instant>) -> Option<Result<Vec<u8>, Failure>> {
         let late = || deadline.is_some_and(|d| Instant::now() >= d);
 
@@ -169,11 +158,9 @@ impl<'t> Job<'t> {
             let end = (self.checked + UTF8_CHUNK).min(self.bytes.len());
             match std::str::from_utf8(&self.bytes[self.checked..end]) {
                 Ok(_) => self.checked = end,
-                // A character cut by the end of the chunk is checked with the next one
                 Err(e) if e.error_len().is_none() && end < self.bytes.len() => {
                     self.checked += e.valid_up_to()
                 }
-                // Reported at the first byte that isn't UTF-8
                 Err(e) => {
                     let before = &self.bytes[..self.checked + e.valid_up_to()];
                     let line = before.iter().filter(|&&b| b == b'\n').count() + 1;
@@ -193,13 +180,11 @@ impl<'t> Job<'t> {
 
         let (parser, builder) = self.run.get_or_insert_with(|| {
             let text = unsafe { std::str::from_utf8_unchecked(self.bytes) };
-            // A byte order mark isn't part of the content
             let text = text.strip_prefix('\u{feff}').unwrap_or(text);
             let builder = Builder::new(self.schema, self.mode, text);
             (Parser::new_from_str(text), builder)
         });
 
-        // Events are pulled one by one, since the parser's own loader recurses once per nesting level
         let mut scan_error = None;
         let mut events = 0u32;
         loop {
@@ -230,7 +215,6 @@ impl<'t> Job<'t> {
     }
 }
 
-// An error found at the end of the input is reported at the end of the last line
 fn end_error(e: ScanError, yaml: &str) -> Failure {
     let (line, col) = (e.marker().line(), e.marker().col() + 1);
     let body = yaml.strip_suffix('\n').unwrap_or(yaml);
@@ -246,12 +230,8 @@ fn end_error(e: ScanError, yaml: &str) -> Failure {
     }
 }
 
-// Erlang's external term format
-// -----------------------------
-
 const MERGE_KEY: [u8; 7] = [109, 0, 0, 0, 2, b'<', b'<'];
 
-// An alias is written as {:__yaml_alias__, index}, and Elixir puts the anchored value in its place
 const ALIAS: [u8; 18] = *b"\x68\x02\x77\x0e__yaml_alias__";
 
 fn write_alias(out: &mut Vec<u8>, index: usize) {
@@ -259,12 +239,10 @@ fn write_alias(out: &mut Vec<u8>, index: usize) {
     write_int(out, index as i64);
 }
 
-// An alias's anchored value from the table, or the bytes themselves
 fn aliased<'b>(bytes: &'b [u8], table: &'b [u8], spans: &[Range<usize>]) -> &'b [u8] {
     alias_index(bytes).map_or(bytes, |i| &table[spans[i].clone()])
 }
 
-// The index in an alias's bytes
 fn alias_index(b: &[u8]) -> Option<usize> {
     match b.strip_prefix(&ALIAS)? {
         [97, n] => Some(*n as usize),
@@ -281,7 +259,6 @@ fn get_u32(b: &[u8], at: usize) -> usize {
     u32::from_be_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]) as usize
 }
 
-// A list or map header whose length is filled in at the end
 fn placeholder(out: &mut Vec<u8>, tag: u8) -> usize {
     out.push(tag);
     out.extend_from_slice(&[0; 4]);
@@ -344,7 +321,6 @@ fn write_value(out: &mut Vec<u8>, value: &Value) {
     }
 }
 
-// A struct is a map with a __struct__ key
 fn write_struct(out: &mut Vec<u8>, module: &str, fields: usize) {
     out.push(116);
     put_u32(out, fields + 1);
@@ -352,7 +328,6 @@ fn write_struct(out: &mut Vec<u8>, module: &str, fields: usize) {
     write_atom(out, module);
 }
 
-// The end of the term at `i`, for the terms written here; a loop, so deep nesting can't overflow the stack
 fn skip(b: &[u8], mut i: usize) -> usize {
     let mut pending = 1;
     while pending > 0 {
@@ -384,7 +359,6 @@ fn skip(b: &[u8], mut i: usize) -> usize {
     i
 }
 
-// The key and value ranges of the map at `i`
 fn map_pairs(b: &[u8], i: usize) -> Vec<(Range<usize>, Range<usize>)> {
     let mut at = i + 5;
     (0..get_u32(b, i + 1))
@@ -397,7 +371,6 @@ fn map_pairs(b: &[u8], i: usize) -> Vec<(Range<usize>, Range<usize>)> {
         .collect()
 }
 
-// The item ranges of the list at `i`
 fn list_items(b: &[u8], i: usize) -> Vec<Range<usize>> {
     let mut at = i + 5;
     (0..get_u32(b, i + 1))
@@ -409,28 +382,20 @@ fn list_items(b: &[u8], i: usize) -> Vec<Range<usize>> {
         .collect()
 }
 
-// Builder
-// -------
-
-// A collection being written; its position is fixed when its first child arrives, since its start event can come late
 struct Frame {
     map: bool,
     start: usize,
     count_at: usize,
     count: usize,
-    // A map's key, waiting for its value
     key: Option<Range<usize>>,
-    // A plain map's pairs, to resolve merge keys and duplicate keys at its end
     pairs: Vec<(Range<usize>, Range<usize>)>,
     size: usize,
     tag: Cow<'static, str>,
     mark: Marker,
-    // Where the node starts with its anchor and tag, for its parent's position
     outer: Option<Marker>,
     anchor: usize,
 }
 
-// Writes the documents from parser events as Erlang terms
 struct Builder<'t> {
     text: &'t str,
     source: Source<'t>,
@@ -440,9 +405,7 @@ struct Builder<'t> {
     stack: Vec<Frame>,
     out: Vec<u8>,
     documents: usize,
-    // Each anchored node's bytes, its number of values, and its index in the table once aliased
     anchors: HashMap<usize, (Vec<u8>, usize, Option<usize>)>,
-    // The values of aliased anchors, written once each
     table: Vec<u8>,
     spans: Vec<Range<usize>>,
     aliased: usize,
@@ -452,7 +415,6 @@ struct Builder<'t> {
 
 impl<'t> Builder<'t> {
     fn new(schema: Schema, mode: Mode, text: &'t str) -> Self {
-        // {documents, aliased values}
         let mut out = vec![131, 104, 2];
         placeholder(&mut out, 108);
         Builder {
@@ -489,7 +451,6 @@ impl<'t> Builder<'t> {
         self.mode == Mode::Ast
     }
 
-    // Writes what goes before a node: a document around a root, or a tuple around a key and its value
     fn begin(&mut self) -> usize {
         if self.ast() {
             match self.stack.last() {
@@ -540,8 +501,6 @@ impl<'t> Builder<'t> {
                 .insert(anchor, (self.out[start..end].to_vec(), node_size, None));
         }
 
-        // A block sequence starts at the "-" before its first item; a block mapping at its first key,
-        // or the "?" before it; a flow collection keeps its "[" or "{"
         if self.mode == Mode::Ast {
             let found = match self.stack.last() {
                 Some(f) if source.at(f.mark).is_some_and(|c| c == b'[' || c == b'{') => None,
@@ -578,7 +537,6 @@ impl<'t> Builder<'t> {
         }
     }
 
-    // Merged pairs come first, so the mapping's own keys win, and earlier merged maps win over later ones
     fn plain_map(&mut self, frame: Frame, merge: bool) {
         let (out, table, spans) = (&self.out, &self.table, &self.spans);
         let resolve = |bytes| aliased(bytes, table, spans);
@@ -621,7 +579,6 @@ impl<'t> Builder<'t> {
                 .map(|(k, v)| (&out[k.clone()], &out[v.clone()])),
         );
 
-        // Duplicate keys keep the last value, with an alias the same key as its anchor
         let mut index: HashMap<&[u8], usize> = HashMap::new();
         let mut unique: Vec<(&[u8], &[u8])> = Vec::new();
         for (key, value) in entries {
@@ -747,10 +704,6 @@ impl<'input> SpannedEventReceiver<'input> for Builder<'_> {
         match event {
             Event::Scalar(text, style, anchor, tag) => {
                 let properties = anchor != 0 || tag.is_some();
-                // A block scalar starts at its "|" or ">", not at its first line of text
-                // An empty value sits at the token after it, or at its tag; an empty last document
-                // sits right after its "---"
-                // Any other value starts after its anchor and tag
                 let at = match style {
                     ScalarStyle::Literal | ScalarStyle::Folded if properties => {
                         self.source.past_properties(mark)
@@ -781,10 +734,8 @@ impl<'input> SpannedEventReceiver<'input> for Builder<'_> {
                 self.open(map, tag, at, outer, anchor);
             }
             Event::SequenceEnd | Event::MappingEnd => self.close(),
-            // An anchor only belongs to its own document
             Event::DocumentStart(explicit) => {
                 self.anchors.clear();
-                // An implicit start has no token, so a block scalar searches from the token before it
                 if !explicit {
                     self.last_end = from;
                 }
@@ -792,7 +743,6 @@ impl<'input> SpannedEventReceiver<'input> for Builder<'_> {
             Event::Alias(id) => match self.anchors.get_mut(&id) {
                 Some((bytes, size, index)) => {
                     let size = *size;
-                    // The anchored value goes in the table the first time it's aliased
                     let index = *index.get_or_insert_with(|| {
                         let at = self.table.len();
                         self.table.extend_from_slice(bytes);
@@ -815,10 +765,6 @@ impl<'input> SpannedEventReceiver<'input> for Builder<'_> {
     }
 }
 
-// Source positions
-// ----------------
-
-// Finds characters by line and column, moving forward through the text, so lookups stay linear
 struct Source<'a> {
     text: &'a [u8],
     line_starts: Vec<usize>,
@@ -834,7 +780,6 @@ impl<'a> Source<'a> {
         }
     }
 
-    // Start of a 1-indexed line; line breaks are found only as far as needed, so a large input isn't scanned at once
     fn line_start(&mut self, line: usize) -> Option<usize> {
         while self.line_starts.len() < line {
             let from = *self.line_starts.last()?;
@@ -844,7 +789,6 @@ impl<'a> Source<'a> {
         self.line_starts.get(line.checked_sub(1)?).copied()
     }
 
-    // Byte offset of a 1-indexed line and 0-indexed character column
     fn offset(&mut self, line: usize, col: usize) -> Option<usize> {
         let (cur_line, cur_col, cur_byte) = self.cursor;
         let (mut c, mut byte) = if line == cur_line && col >= cur_col {
@@ -869,13 +813,11 @@ impl<'a> Source<'a> {
         Some(byte)
     }
 
-    // The byte at a position
     fn at(&mut self, at: Marker) -> Option<u8> {
         let i = self.offset(at.line(), at.col())?;
         self.text.get(i).copied()
     }
 
-    // Where a node's content starts, past its anchor and tag, as yamerl gave it
     fn past_properties(&mut self, at: Marker) -> Marker {
         let Some(mut i) = self.offset(at.line(), at.col()) else {
             return at;
@@ -918,7 +860,6 @@ impl<'a> Source<'a> {
         Marker::new(0, line, col)
     }
 
-    // One of `targets` just before a position, with only blanks and line breaks between
     fn before(&mut self, at: Marker, targets: &[u8]) -> Option<Marker> {
         let mut i = self.offset(at.line(), at.col())?;
         let mut line = at.line();
@@ -939,7 +880,6 @@ impl<'a> Source<'a> {
         None
     }
 
-    // The first of `targets` between two positions, skipping comments and verbatim tags
     fn find(&mut self, from: Marker, to: Marker, targets: &[u8]) -> Option<Marker> {
         let start = self.offset(from.line(), from.col())?;
         let end = self.offset(to.line(), to.col())?;
@@ -987,15 +927,10 @@ fn full_tag(tag: &Tag) -> String {
     format!("{}{}", tag.handle, tag.suffix)
 }
 
-// A lone "!" asks for the default type of the node's kind
 fn is_non_specific(tag: &Tag) -> bool {
     tag.handle.is_empty() && tag.suffix == "!"
 }
 
-// Scalars
-// -------
-
-// A scalar's value, as written to the result
 enum Value<'t> {
     Str(&'t str),
     Bytes(Vec<u8>),
@@ -1011,7 +946,6 @@ fn boolean(b: bool) -> Value<'static> {
     Value::Atom(if b { "true" } else { "false" })
 }
 
-// A value with its tag
 type Typed<'t> = (Cow<'static, str>, Value<'t>);
 
 fn resolve<'t>(
@@ -1089,7 +1023,6 @@ fn special_float(text: &str) -> Option<Value<'static>> {
     }
 }
 
-// Core: [-+]?[0-9]+, 0o[0-7]+, 0x[0-9a-fA-F]+, and floats with an optional exponent
 fn core_number(text: &str) -> Option<Typed<'static>> {
     if let Some(v) = special_float(text) {
         return Some((FLOAT.into(), v));
@@ -1110,7 +1043,6 @@ fn core_number(text: &str) -> Option<Typed<'static>> {
     None
 }
 
-// YAML 1.1: binary, octal, hex, underscores and base 60, plus floats with underscores
 fn yaml11_number(text: &str) -> Option<Typed<'static>> {
     if let Some(v) = special_float(text) {
         return Some((FLOAT.into(), v));
@@ -1141,7 +1073,6 @@ fn yaml11_number(text: &str) -> Option<Typed<'static>> {
         };
         return int(&signed).map(|v| (INT.into(), v));
     }
-    // A YAML 1.1 float needs a dot, and a sign on its exponent
     let signed_exponent = match digits.find(['e', 'E']) {
         Some(i) => matches!(digits.as_bytes().get(i + 1), Some(b'+' | b'-')),
         None => true,
@@ -1157,7 +1088,6 @@ fn yaml11_number(text: &str) -> Option<Typed<'static>> {
     None
 }
 
-// 190:20:30 is 190 * 3600 + 20 * 60 + 30; a fraction on the last part makes it a float
 fn sexagesimal(body: &str, negative: bool) -> Option<Typed<'static>> {
     let parts: Vec<&str> = body.split(':').collect();
     let (last, rest) = parts.split_last()?;
@@ -1260,7 +1190,6 @@ fn bool_11(text: &str) -> Option<bool> {
     }
 }
 
-// Integers of any size, as small integers when they fit
 fn int(text: &str) -> Option<Value<'static>> {
     let text = text.strip_prefix('+').unwrap_or(text);
     match text.parse::<i64>() {
@@ -1295,7 +1224,6 @@ fn float(text: &str) -> Option<Value<'static>> {
         .map(Value::Float)
 }
 
-// Base64 with whitespace allowed between characters
 fn base64(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(text.len() * 3 / 4);
     let (mut acc, mut bits, mut padding, mut chars) = (0u32, 0, 0, 0);
