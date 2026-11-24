@@ -48,22 +48,6 @@ defmodule YAML.Parser do
   defp finish({:ok, binary}), do: binary |> :erlang.binary_to_term() |> result()
   defp finish(error), do: result(error)
 
-  # Decodes chunks in Rust as they arrive, giving each document's result once its chunk is read
-  @doc false
-  def stream(enumerable, schema, mode) do
-    Stream.transform(
-      enumerable,
-      fn -> Native.stream_new(schema, mode) end,
-      fn chunk, stream -> {stream |> Native.stream_feed(chunk) |> batch(), stream} end,
-      fn stream -> {stream |> Native.stream_end() |> batch(), stream} end,
-      fn _stream -> :ok end
-    )
-  end
-
-  defp batch({:cont, stream}), do: stream |> Native.stream_resume() |> batch()
-  defp batch(:ok), do: []
-  defp batch({:ok, binary}), do: binary |> :erlang.binary_to_term() |> Enum.map(&result/1)
-
   defp result({documents, []}), do: {:ok, documents}
   defp result({documents, aliased}), do: {:ok, unalias(documents, unalias_table(aliased))}
 

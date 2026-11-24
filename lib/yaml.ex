@@ -4,6 +4,7 @@ defmodule YAML do
   """
   alias YAML.ArgumentError
   alias YAML.AST.Document
+  alias YAML.Chunks
   alias YAML.Decode
   alias YAML.Encode
   alias YAML.EncodeError
@@ -132,11 +133,15 @@ defmodule YAML do
   end
 
   @doc """
-  Lazily decodes a stream of YAML text, such as `File.stream!/1`, one document at a time,
-  yielding `{:ok, document}` or `{:error, error}` for each. Takes the same options as
-  `decode/2`, except `:return`. Raises `YAML.ArgumentError` on invalid options.
+  Lazily decodes a stream of YAML text, such as `File.stream!/1`, yielding `{:ok, document}` or
+  `{:error, error}` for each document. Takes the same options as `decode/2`, except `:return`.
+  Raises `YAML.ArgumentError` on invalid options.
 
-  A document is yielded once the next `---` or `...` line, or the end of the input, is read.
+  A document over 256 KB is yielded in pieces of about 256 KB, each a list of some of its items or a
+  map of some of its pairs. A long value under one key is yielded as maps of that key with part of
+  its value, such as `%{"records" => [some items]}`. From its first anchor, such as `&name`, a
+  document isn't cut, so its aliases work. A document that can't be cut, such as one with a very
+  long line, a flow collection like `[...]` or `? key` entries, is yielded whole.
 
   ## Examples
 
@@ -162,14 +167,11 @@ defmodule YAML do
         {:error, error} -> raise error
       end
 
-    mode = if ast?(opts), do: :ast, else: {:plain, opts[:enable_merge]}
+    decode = fn binary ->
+      with {:ok, yaml} <- parse(binary, opts), do: {:ok, apply_options(yaml, opts)}
+    end
 
-    enumerable
-    |> Parser.stream(opts[:schema], mode)
-    |> Stream.flat_map(fn
-      {:ok, documents} -> documents |> apply_options(opts) |> Enum.map(&{:ok, &1})
-      {:error, error} -> [{:error, error}]
-    end)
+    Chunks.stream(enumerable, decode, detailed: opts[:detailed])
   end
 
   @doc """
