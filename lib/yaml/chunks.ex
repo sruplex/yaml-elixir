@@ -14,7 +14,6 @@ defmodule YAML.Chunks do
           Enumerable.t()
   def stream(enumerable, decode, opts \\ []) do
     chunk_size = Keyword.get(opts, :chunk_size, @chunk_size)
-    # Joined documents move an empty document's null to another line
     join_size = if opts[:detailed], do: 0, else: chunk_size
 
     enumerable
@@ -80,16 +79,19 @@ defmodule YAML.Chunks do
   defp pieces(enumerable, sizes) do
     Stream.transform(
       enumerable,
-      fn -> {"", new(1)} end,
+      fn -> {nil, new(1)} end,
       fn chunk, {rest, piece} ->
+        {rest, chunk} =
+          if rest, do: {rest, chunk}, else: {"", String.replace_prefix(chunk, "\uFEFF", "")}
+
         text = rest <> chunk
         ends = :binary.matches(text, "\n", scope: {byte_size(rest), byte_size(chunk)})
         {done, piece, from} = scan(ends, 0, piece, nil, {text, sizes}, [])
         {done, {binary_part(text, from, byte_size(text) - from), piece}}
       end,
       fn {rest, piece} ->
-        {done, piece} = if rest == "", do: {[], piece}, else: add(rest, piece, sizes)
-        {done ++ document(piece), {"", new(1)}}
+        {done, piece} = if rest in [nil, ""], do: {[], piece}, else: add(rest, piece, sizes)
+        {done ++ document(piece), {nil, new(1)}}
       end,
       fn _acc -> :ok end
     )
@@ -158,7 +160,6 @@ defmodule YAML.Chunks do
 
   defp column0?(first), do: first not in [nil, ?\s, ?\t, ?\r, ?#]
 
-  # An AST would give the repeated key the line before the piece
   defp descend?(piece, run, {chunk_size, join_size}),
     do:
       join_size > 0 and piece.key == nil and not piece.stuck and piece.kind == :map and
@@ -462,11 +463,10 @@ defmodule YAML.Chunks do
   defp item?(:list, <<"-", c, _::binary>>), do: c in ~c" \t\r"
   defp item?(:map, ""), do: false
 
-  # Only a key line starts a pair, so any other line stays with the one before and fails to parse
   defp item?(:map, line) do
     [line | _comment] = String.split(line, " #", parts: 2)
 
-    not item?(:list, line) and :binary.first(line) not in ~c" \t\r#:]}" and
+    line != "" and not item?(:list, line) and :binary.first(line) not in ~c" \t\r#:]}" and
       (String.contains?(line, ": ") or String.ends_with?(String.trim_trailing(line), ":"))
   end
 

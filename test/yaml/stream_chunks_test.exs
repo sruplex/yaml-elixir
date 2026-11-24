@@ -112,6 +112,22 @@ defmodule YAML.StreamChunksTest do
                YAML.decode!(config)["data"]
     end
 
+    test "cuts a long map under one key with comments and a byte order mark" do
+      keys =
+        Enum.map_join(1..60_000, fn i ->
+          if(rem(i, 500) == 0, do: " # Section\n", else: "") <> "  key#{i}: v#{i}\n"
+        end)
+
+      for yaml <- ["en:\n" <> keys, "\uFEFFen:\n" <> keys] do
+        pieces = stream([yaml])
+
+        assert length(pieces) > 1
+
+        assert pieces |> Enum.map(& &1["en"]) |> Enum.reduce(&Map.merge(&2, &1)) ==
+                 YAML.decode!(yaml)["en"]
+      end
+    end
+
     test "keeps a long value under one key whole when it can't be cut" do
       text = "notes: |\n" <> String.duplicate("  line of text\n", 80_000)
       flow = "records: [\n" <> String.duplicate("  1,\n", 160_000) <> "]\n"
