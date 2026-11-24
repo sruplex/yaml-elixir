@@ -97,6 +97,21 @@ defmodule YAML.StreamChunksTest do
                YAML.decode!(yaml)["users"]
     end
 
+    test "cuts a long map under one key after a small document and a bare ---" do
+      config =
+        "kind: ConfigMap\ndata:\n" <> indent(Enum.map_join(1..40_000, &"key#{&1}: v#{&1}\n"))
+
+      [namespace, first | rest] = stream(["kind: Namespace\n---\n" <> config])
+
+      assert namespace == %{"kind" => "Namespace"}
+      assert rest != []
+
+      assert [first | rest]
+             |> Enum.map(&Map.get(&1, "data", %{}))
+             |> Enum.reduce(&Map.merge(&2, &1)) ==
+               YAML.decode!(config)["data"]
+    end
+
     test "keeps a long value under one key whole when it can't be cut" do
       text = "notes: |\n" <> String.duplicate("  line of text\n", 80_000)
       flow = "records: [\n" <> String.duplicate("  1,\n", 160_000) <> "]\n"
@@ -178,20 +193,22 @@ defmodule YAML.StreamChunksTest do
       assert List.last(structs) == %User{name: "a", n: 1}
     end
 
-    test "finds an anchor in the same piece, and gives an error for one further back" do
-      near = "- &b {x: 1}\n- <<: *b\n  y: 2\n" <> @list
+    test "doesn't cut a document after an anchor, so a far alias finds it" do
+      list = "- &b {x: 1}\n" <> @list <> @list <> "- *b\n"
+      map = "base: &b {x: 1}\n" <> @map <> "other:\n  <<: *b\n  y: 2\n"
 
-      assert stream([near]) |> Enum.concat() |> Enum.take(2) == [
-               %{"x" => 1},
-               %{"x" => 1, "y" => 2}
-             ]
+      for yaml <- [list, map] do
+        assert [whole] = stream([yaml])
+        assert whole == YAML.decode!(yaml)
+      end
+    end
 
-      far = "- &b {x: 1}\n" <> @list <> @list <> "- *b\n"
+    test "cuts a document before its first anchor" do
+      list = @list <> "- &b {x: 1}\n" <> @list <> "- *b\n"
+      pieces = stream([list])
 
-      assert [{:error, %ParsingError{message: message}}] =
-               [far] |> YAML.decode_stream() |> Enum.filter(&match?({:error, _}, &1))
-
-      assert message =~ "unknown anchor"
+      assert length(pieces) > 1
+      assert Enum.concat(pieces) == YAML.decode!(list)
     end
 
     test "gives an error with its line in the stream, skips the rest of that document, then goes on" do
@@ -226,6 +243,13 @@ defmodule YAML.StreamChunksTest do
       assert_raise ArgumentError, "bad value", fn -> stream([yaml], tags: tags) end
     end
 
+    test "runs a :tags function in the caller's process" do
+      caller = self()
+      tags = %{"!who" => fn _ -> self() == caller end}
+
+      assert stream([@list <> "- !who x\n"], tags: tags) |> Enum.concat() |> List.last()
+    end
+
     test "throws and exits from a :tags function in the caller" do
       yaml = @list <> "- !bad x\n"
 
@@ -242,7 +266,10 @@ defmodule YAML.StreamChunksTest do
           ],
           size <- 1..byte_size(yaml) do
         {:error, %ParsingError{location: {line, _}}} = YAML.decode(yaml)
-        results = [yaml] |> YAML.Chunks.stream(&YAML.decode/1, chunk_size: size) |> Enum.to_list()
+
+        results =
+          [yaml] |> YAML.Chunks.stream(&YAML.decode/1, chunk_size: size) |> Enum.to_list()
+
         errors = Enum.filter(results, &match?({:error, _}, &1))
 
         assert [{:error, %ParsingError{location: {^line, _}}}] = errors, inspect({yaml, size})
