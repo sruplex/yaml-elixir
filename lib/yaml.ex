@@ -139,8 +139,9 @@ defmodule YAML do
 
   A document over 256 KB is yielded in pieces of about 256 KB, each a list of some of its items or a
   map of some of its pairs. A long value under one key is yielded as maps of that key with part of
-  its value, such as `%{"records" => [some items]}`. From its first anchor, such as `&name`, a document isn't cut, so its
-  aliases work.
+  its value, such as `%{"records" => [some items]}`. From its first anchor, such as `&name`, a
+  document isn't cut, so its aliases work. A document that can't be cut, such as one with a very
+  long line, a flow collection like `[...]` or `? key` entries, is yielded whole.
 
   ## Examples
 

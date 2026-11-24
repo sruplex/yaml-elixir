@@ -6,6 +6,22 @@ defmodule YAML.Chunks do
 
   @chunk_size 262_144
 
+  defstruct lines: [],
+            count: 0,
+            size: 0,
+            kind: :unknown,
+            pad: "",
+            directives: [],
+            start: 1,
+            continued: false,
+            in_document: false,
+            begun: false,
+            key: nil,
+            key_line: nil,
+            stuck: false,
+            whole: false,
+            doc_size: 0
+
   @spec stream(
           Enumerable.t(),
           (binary() -> {:ok, list()} | {:error, ParsingError.t()}),
@@ -29,14 +45,30 @@ defmodule YAML.Chunks do
   defp result({_continued, {:ok, data}}, _failed), do: {data, false}
   defp result({_continued, {:error, _error} = error}, _failed), do: {[error], true}
 
-  defp decode_piece({line, text, continued}, decode) do
+  defp decode_piece({line, text, continued, key_line}, decode) do
     text = IO.iodata_to_binary(text)
 
     case decode.(text) do
-      {:ok, data} -> [{continued, {:ok, Enum.map(data, &{:ok, shift(&1, line - 1)})}}]
-      {:error, error} -> decode_each(text, error, line, continued, decode)
+      {:ok, data} ->
+        data = Enum.map(data, &{:ok, &1 |> shift(line - 1) |> key_line(key_line)})
+        [{continued, {:ok, data}}]
+
+      {:error, error} ->
+        decode_each(text, error, line, continued, decode)
     end
   end
+
+  defp key_line(
+         %AST.Document{root: %AST.Mapping{pairs: [{%AST.Scalar{} = key, value} | rest]} = map} =
+           document,
+         line
+       )
+       when is_integer(line) do
+    key = %{key | meta: %{key.meta | line: line}}
+    %{document | root: %{map | pairs: [{key, value} | rest], meta: %{map.meta | line: line}}}
+  end
+
+  defp key_line(data, _line), do: data
 
   defp decode_each(text, error, line, continued, decode) do
     case [text] |> pieces({byte_size(text) + 1, 0}) |> Enum.to_list() do
@@ -46,8 +78,8 @@ defmodule YAML.Chunks do
       documents ->
         documents
         |> Enum.with_index()
-        |> Enum.flat_map(fn {{at, text, _continued}, index} ->
-          decode_piece({line + at - 1, text, continued and index == 0}, decode)
+        |> Enum.flat_map(fn {{at, text, _continued, _key_line}, index} ->
+          decode_piece({line + at - 1, text, continued and index == 0, nil}, decode)
         end)
     end
   end
@@ -79,23 +111,31 @@ defmodule YAML.Chunks do
   defp pieces(enumerable, sizes) do
     Stream.transform(
       enumerable,
-      fn -> {nil, new(1)} end,
-      fn chunk, {rest, piece} ->
-        {rest, chunk} =
-          if rest, do: {rest, chunk}, else: {"", String.replace_prefix(chunk, "\uFEFF", "")}
+      fn -> {[], true, %__MODULE__{}} end,
+      fn chunk, {held, first?, piece} ->
+        case :binary.match(chunk, "\n") do
+          :nomatch ->
+            {[], {[chunk | held], first?, piece}}
 
-        text = rest <> chunk
-        ends = :binary.matches(text, "\n", scope: {byte_size(rest), byte_size(chunk)})
-        {done, piece, from} = scan(ends, 0, piece, nil, {text, sizes}, [])
-        {done, {binary_part(text, from, byte_size(text) - from), piece}}
+          {at, 1} ->
+            text = joined([chunk | held], first?)
+            start = byte_size(text) - byte_size(chunk) + at
+            ends = :binary.matches(text, "\n", scope: {start, byte_size(text) - start})
+            {done, piece, from} = scan(ends, 0, piece, nil, {text, sizes}, [])
+            {done, {[binary_part(text, from, byte_size(text) - from)], false, piece}}
+        end
       end,
-      fn {rest, piece} ->
-        {done, piece} = if rest in [nil, ""], do: {[], piece}, else: add(rest, piece, sizes)
-        {done ++ document(piece), {nil, new(1)}}
+      fn {held, first?, piece} ->
+        rest = joined(held, first?)
+        {done, piece} = if rest == "", do: {[], piece}, else: add(rest, piece, sizes)
+        {done ++ document(piece), {[], true, %__MODULE__{}}}
       end,
       fn _acc -> :ok end
     )
   end
+
+  defp joined(held, true), do: held |> joined(false) |> String.replace_prefix("\uFEFF", "")
+  defp joined(held, false), do: held |> Enum.reverse() |> IO.iodata_to_binary()
 
   defp scan([], from, piece, run, {text, _sizes}, done),
     do: {Enum.reverse(done), flush(piece, run, text), from}
@@ -105,7 +145,7 @@ defmodule YAML.Chunks do
     first = first(text, s, e)
 
     cond do
-      descend?(piece, run, sizes) ->
+      descend?(piece, run, chunk_size) ->
         {ready, piece} = descend(flush(piece, run, text))
         scan(all, s, piece, nil, ctx, Enum.reverse(ready, done))
 
@@ -160,10 +200,10 @@ defmodule YAML.Chunks do
 
   defp column0?(first), do: first not in [nil, ?\s, ?\t, ?\r, ?#]
 
-  defp descend?(piece, run, {chunk_size, join_size}),
+  defp descend?(piece, run, chunk_size),
     do:
-      join_size > 0 and piece.key == nil and not piece.stuck and piece.kind == :map and
-        piece.pad == "" and size(piece, run) - piece.doc_size >= 2 * chunk_size
+      piece.key == nil and not piece.stuck and piece.kind == :map and piece.pad == "" and
+        size(piece, run) - piece.doc_size >= 2 * chunk_size
 
   defp descend(piece) do
     text = piece.lines |> Enum.reverse() |> IO.iodata_to_binary()
@@ -178,7 +218,8 @@ defmodule YAML.Chunks do
          true <- at != nil,
          {before, [key | value]} = Enum.split(lines, at),
          true <- Regex.match?(~r/:[ \t]*(#.*)?\r?$/, key),
-         {kind, pad} when kind in [:list, :map] <- value_kind(value) do
+         {kind, pad} when kind in [:list, :map] <- value_kind(value),
+         false <- Enum.any?(value, &outside_value?(&1, %{kind: kind, pad: pad})) do
       head = Enum.reverse(["---" | piece.directives])
       skipped = earlier |> :binary.matches("\n") |> length()
       part? = Enum.any?(before, &root_key?/1)
@@ -187,13 +228,14 @@ defmodule YAML.Chunks do
       earlier =
         if IO.iodata_length(earlier) == 0,
           do: [],
-          else: [{piece.start, earlier, piece.continued}]
+          else: [{piece.start, earlier, piece.continued, nil}]
 
       next = %{
         lines(%{piece | start: piece.start + skipped + at - length(head)}, head ++ [key | value])
         | kind: kind,
           pad: pad,
           key: key,
+          key_line: piece.start + skipped + at,
           continued: part? or (piece.doc_size == 0 and piece.continued),
           doc_size: 0
       }
@@ -251,28 +293,10 @@ defmodule YAML.Chunks do
     }
 
   defp finish(piece),
-    do: {piece.start, Enum.reverse(piece.lines), piece.continued}
+    do: {piece.start, Enum.reverse(piece.lines), piece.continued, piece.key_line}
 
   defp document(%{in_document: false}), do: []
   defp document(piece), do: [finish(piece)]
-
-  defp new(start),
-    do: %{
-      lines: [],
-      count: 0,
-      size: 0,
-      kind: :unknown,
-      pad: "",
-      directives: [],
-      start: start,
-      continued: false,
-      in_document: false,
-      begun: false,
-      key: nil,
-      stuck: false,
-      whole: false,
-      doc_size: 0
-    }
 
   defp next_document(piece),
     do: %{
@@ -298,7 +322,7 @@ defmodule YAML.Chunks do
         piece = append(line, piece)
 
         if piece.size >= join_size,
-          do: {document(piece), new(at + 1)},
+          do: {document(piece), %__MODULE__{start: at + 1}},
           else: {[], next_document(piece)}
 
       piece.kind == :lazy ->
@@ -339,7 +363,10 @@ defmodule YAML.Chunks do
         {[], append(line, piece)}
 
       piece.key != nil and item?(:map, line) ->
-        next_piece(piece, line, at, %{kind: :map, pad: "", key: nil})
+        next_piece(piece, line, at, %{kind: :map, pad: "", key: nil, key_line: nil})
+
+      piece.key != nil and outside_value?(line, piece) ->
+        {[], append(line, %{piece | key: nil, key_line: nil, whole: true})}
 
       piece.size - piece.doc_size >= chunk_size and item?(piece.kind, piece.pad, line) ->
         next_piece(piece, line, at, %{})
@@ -375,16 +402,43 @@ defmodule YAML.Chunks do
     size = byte_size(doc)
 
     Enum.any?(:binary.matches(doc, "&"), fn {at, 1} ->
-      (at == 0 or :binary.at(doc, at - 1) in ~c" \t\n[{,") and at + 1 < size and
-        :binary.at(doc, at + 1) not in ~c" \t\r\n,[]{}"
+      at + 1 < size and :binary.at(doc, at + 1) not in ~c" \t\r\n,[]{}" and node_start?(doc, at)
     end)
+  end
+
+  defp node_start?(_doc, 0), do: true
+
+  defp node_start?(doc, at) do
+    case :binary.at(doc, at - 1) do
+      c when c in ~c"\n[{," -> true
+      c when c in ~c" \t" -> after_space?(doc, at - 1)
+      _c -> false
+    end
+  end
+
+  defp after_space?(_doc, 0), do: true
+
+  defp after_space?(doc, at) do
+    case :binary.at(doc, at - 1) do
+      c when c in ~c" \t" -> after_space?(doc, at - 1)
+      c when c in ~c"\n-?:,[{" -> true
+      _c -> tag?(doc, at - 1)
+    end
+  end
+
+  defp tag?(doc, at) do
+    case :binary.at(doc, at) do
+      ?! -> node_start?(doc, at) or (at > 0 and tag?(doc, at - 1))
+      c when c in ~c" \t\n\"'[]{}" -> false
+      _c -> at > 0 and tag?(doc, at - 1)
+    end
   end
 
   defp start(line, piece, at, join_size) do
     {done, piece} =
       cond do
         not piece.begun -> {[], piece}
-        piece.size >= join_size -> {document(piece), new(at)}
+        piece.size >= join_size -> {document(piece), %__MODULE__{start: at}}
         true -> {[], next_document(piece)}
       end
 
@@ -447,6 +501,14 @@ defmodule YAML.Chunks do
       :binary.first(line) in ~c" \t[]{}\"'|>!&*?:%@`," -> :none
       String.contains?(line, ": ") or String.ends_with?(trimmed, ":") -> :map
       true -> :none
+    end
+  end
+
+  defp outside_value?(line, piece) do
+    case line do
+      "" -> false
+      <<c, _::binary>> when c in ~c" \t\r#" -> false
+      _ -> not (piece.pad == "" and item?(piece.kind, line))
     end
   end
 

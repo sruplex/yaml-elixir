@@ -128,6 +128,71 @@ defmodule YAML.StreamChunksTest do
       end
     end
 
+    test "cuts a file with a byte order mark read a byte at a time" do
+      yaml = "\uFEFFen:\n" <> Enum.map_join(1..50, &"  k#{&1}: v\n")
+
+      for read <- [1, 2, 3] do
+        results =
+          yaml
+          |> chunked(read)
+          |> YAML.Chunks.stream(&YAML.decode(&1, return: :all_documents), chunk_size: 10)
+
+        pieces = for {:ok, piece} <- results, do: piece
+
+        assert length(pieces) > 1
+
+        assert pieces |> Enum.map(& &1["en"]) |> Enum.reduce(&Map.merge(&2, &1)) ==
+                 YAML.decode!(yaml)["en"]
+      end
+    end
+
+    test "cuts a document with & in its text, and keeps one with an anchor whole" do
+      text =
+        Enum.map_join(
+          1..15_000,
+          &"job#{&1}:\n  script: make && make test\n  next: \"A &amp; B -&gt; C\"\n"
+        )
+
+      pieces = stream([text])
+
+      assert length(pieces) > 1
+      assert Enum.reduce(pieces, &Map.merge(&2, &1)) == YAML.decode!(text)
+
+      tagged = "base: !t &b {x: 1}\n" <> Enum.map_join(1..30_000, &"k#{&1}: v\n") <> "other: *b\n"
+
+      assert stream([tagged], tags: %{"!t" => & &1}) == [
+               YAML.decode!(tagged, tags: %{"!t" => & &1})
+             ]
+    end
+
+    test "keeps the rest of a document whole after a line at column 0 that isn't a key" do
+      valid = "records:\n  - 1\n  - 2\n  - 3\n? k\n:\n  - 4\n  - 5\n"
+
+      invalid =
+        "paths:\n  /pets:\n    get:\n      schema:\n:       ref: x\n  /other:\n    get: 1\nz: 1\n"
+
+      for size <- 1..byte_size(invalid) do
+        results =
+          [valid]
+          |> YAML.Chunks.stream(&YAML.decode(&1, return: :all_documents), chunk_size: size)
+          |> Enum.to_list()
+
+        joined =
+          for {:ok, piece} <- results,
+              reduce: %{},
+              do: (map -> Map.merge(map, piece, fn _key, a, b -> a ++ b end))
+
+        assert joined == YAML.decode!(valid), inspect(size)
+
+        results =
+          [invalid]
+          |> YAML.Chunks.stream(&YAML.decode(&1, return: :all_documents), chunk_size: size)
+          |> Enum.to_list()
+
+        assert Enum.any?(results, &match?({:error, _}, &1)), inspect(size)
+      end
+    end
+
     test "keeps a long value under one key whole when it can't be cut" do
       text = "notes: |\n" <> String.duplicate("  line of text\n", 80_000)
       flow = "records: [\n" <> String.duplicate("  1,\n", 160_000) <> "]\n"
@@ -182,12 +247,22 @@ defmodule YAML.StreamChunksTest do
       assert [[%User{name: "n1", n: 1} | _] | _] = stream([users], as: [%User{}])
     end
 
-    test "keeps a long value under one key whole, with its key's line, with detailed: true" do
+    test "cuts a long value under one key with its key's line, with detailed: true" do
       yaml = "version: 1\nrecords:\n" <> indent(@list)
-      assert [%YAML.AST.Document{root: root}] = stream([yaml], detailed: true)
+      [%{root: whole}] = YAML.decode!(yaml, detailed: true, return: :all_documents)
+      pieces = stream([yaml], detailed: true)
 
-      assert [_version, {%YAML.AST.Scalar{value: "records", meta: %{line: 2}}, _records}] =
-               root.pairs
+      assert length(pieces) > 1
+
+      for %{root: %{pairs: pairs}} <- tl(pieces) do
+        assert [{%YAML.AST.Scalar{value: "records", meta: %{line: 2}}, _items}] = pairs
+      end
+
+      records = fn %{root: %{pairs: pairs}} ->
+        for {%{value: "records"}, value} <- pairs, item <- value.items, do: item
+      end
+
+      assert Enum.flat_map(pieces, records) == records.(%{root: whole})
     end
 
     test "gives AST pieces with their lines in the whole stream, with detailed: true" do
